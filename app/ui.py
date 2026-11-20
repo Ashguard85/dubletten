@@ -268,38 +268,83 @@ with review:
                     else:
                         st.success(f'{len(jobs)} Vorschläge gespeichert. Bitte manuell prüfen.')
     if count:
-        pages = (count+19)//20
-        page = st.number_input('Seite',min_value=1,max_value=pages,value=1,step=1)
-        _, items = page_pairs(db,pid,state=state,min_score=minimum,offset=(page-1)*20,limit=20)
-        for pair in items:
-            ra=json.loads(pair['a_json']); rb=json.loads(pair['b_json'])
-            title=f"{pair['score']:3d}/100 {'(Splink)' if is_splink else '(RapidFuzz)'} · {ra.get('company') or (ra.get('first_name','')+' '+ra.get('last_name','')).strip()} ↔ {rb.get('company') or (rb.get('first_name','')+' '+rb.get('last_name','')).strip()} · {pair['state']}"
-            with st.expander(title):
-                l,r=st.columns(2)
-                for col,raw,source in [(l,ra,'A'),(r,rb,'B')]:
+        pages = (count + 19) // 20
+        page = st.number_input('Seite', min_value=1, max_value=pages, value=1, step=1,
+                               key=f'review_page_{pid}_{state}_{minimum}')
+        _, items = page_pairs(db, pid, state=state, min_score=minimum,
+                              offset=(page-1)*20, limit=20)
+        if items:
+            # Nur ein Paar gleichzeitig anzeigen: keine langen, verschachtelten
+            # st.expander-Karten mit potentiell abgeschnittenem Inhalt.
+            def pair_label(index):
+                row = items[index]
+                left = json.loads(row['a_json'])
+                right = json.loads(row['b_json'])
+                name_a = left.get('company') or (left.get('first_name','') + ' ' + left.get('last_name','')).strip()
+                name_b = right.get('company') or (right.get('first_name','') + ' ' + right.get('last_name','')).strip()
+                engine_label = 'Splink' if is_splink else 'RapidFuzz'
+                return f"{index+1}. {row['score']:3d}/100 ({engine_label}) · {name_a} ↔ {name_b} · {row['state']}"
+
+            selection_key = f'review_pair_{pid}_{state}_{minimum}_{page}'
+            # Nach Bestätigen/Ablehnen kann die Liste kürzer werden.
+            if selection_key in st.session_state and st.session_state[selection_key] not in range(len(items)):
+                del st.session_state[selection_key]
+            chosen = st.selectbox('Treffer auswählen (Details darunter)',
+                                  options=list(range(len(items))),
+                                  format_func=pair_label, key=selection_key)
+
+            def move_selection(delta):
+                old = st.session_state.get(selection_key, 0)
+                st.session_state[selection_key] = max(0, min(len(items)-1, old+delta))
+
+            nav_left, nav_middle, nav_right = st.columns([1, 2, 1])
+            with nav_left:
+                st.button('← Vorheriger Treffer', key=f'previous_{selection_key}',
+                          disabled=chosen == 0, on_click=move_selection, args=(-1,),
+                          use_container_width=True)
+            with nav_middle:
+                st.caption(f'Treffer {chosen+1} von {len(items)} auf Seite {page} / {pages} · Nur ein Paar wird gleichzeitig angezeigt')
+            with nav_right:
+                st.button('Nächster Treffer →', key=f'next_{selection_key}',
+                          disabled=chosen == len(items)-1, on_click=move_selection,
+                          args=(1,), use_container_width=True)
+
+            pair = items[chosen]
+            ra = json.loads(pair['a_json'])
+            rb = json.loads(pair['b_json'])
+            with st.container(border=True):
+                st.markdown('#### ' + pair_label(chosen))
+                left_col, right_col = st.columns(2)
+                for col, raw, source in ((left_col, ra, 'A'), (right_col, rb, 'B')):
                     with col:
                         st.markdown(f'**CRM {source} · ID `{pair[source.lower()+"_id"]}`**')
-                        st.table([{'Feld':LABELS[f], 'Wert':raw.get(f,'')} for f in FIELDS if f != 'id' and raw.get(f)])
+                        st.table([{'Feld': LABELS[field], 'Wert': raw.get(field, '')}
+                                  for field in FIELDS if field != 'id' and raw.get(field)])
                 if is_splink and pair['match_probability'] is not None:
                     st.caption(f"**Splink-Modellwert:** {pair['match_probability']:.5f} · nur zur Priorisierung, keine Garantie")
                 st.caption(f"**Erkannte Merkmale:** {pair['reason']}")
-                with st.expander('🔎 Feldweise Diagnose (unabhängig vom Splink-Modell)'):
-                    ra_norm=db.execute('SELECT * FROM records WHERE pk=?',(pair['a_pk'],)).fetchone()
-                    rb_norm=db.execute('SELECT * FROM records WHERE pk=?',(pair['b_pk'],)).fetchone()
-                    st.dataframe(comparison_diagnostics(ra_norm,rb_norm),hide_index=True,
-                                 use_container_width=True)
+
+                diagnosis_key = f'diagnosis_{pid}_{pair["a_pk"]}_{pair["b_pk"]}'
+                if st.checkbox('🔎 Feldweise Diagnose anzeigen', key=diagnosis_key):
+                    ra_norm = db.execute('SELECT * FROM records WHERE pk=?', (pair['a_pk'],)).fetchone()
+                    rb_norm = db.execute('SELECT * FROM records WHERE pk=?', (pair['b_pk'],)).fetchone()
+                    st.dataframe(comparison_diagnostics(ra_norm, rb_norm),
+                                 hide_index=True, use_container_width=True)
                     if ra_norm['address_conflict'] or rb_norm['address_conflict']:
                         st.warning('Hausnummer im CRM-Feld widerspricht möglicherweise der Strassenzeile. Originaldaten prüfen.')
                     st.caption('Diese Diagnose verwendet normalisierte Feldwerte. Es sind keine Splink-Beitragsgewichte oder kausalen Erklärungen.')
                 if pair['llm_decision']:
                     st.info(f"Lokale KI: **{pair['llm_decision']}** · {pair['llm_reason']} ({pair['llm_model']})")
-                k1,k2,k3,k4 = st.columns(4)
-                opts = [('bestaetigt','✅ Bestätigen'),('abgelehnt','❌ Ablehnen'),('unklar','❓ Unklar'),('offen','↩️ Zurücksetzen')]
-                for col,(new_state,lab) in zip((k1,k2,k3,k4),opts):
+
+                k1, k2, k3, k4 = st.columns(4)
+                actions = (('bestaetigt', '✅ Bestätigen'), ('abgelehnt', '❌ Ablehnen'),
+                           ('unklar', '❓ Unklar'), ('offen', '↩️ Zurücksetzen'))
+                for col, (new_state, lab) in zip((k1, k2, k3, k4), actions):
                     with col:
-                        if st.button(lab,key=f'{pid}_{pair["a_pk"]}_{pair["b_pk"]}_{new_state}',use_container_width=True):
+                        if st.button(lab, key=f'{pid}_{pair["a_pk"]}_{pair["b_pk"]}_{new_state}',
+                                     use_container_width=True):
                             try:
-                                set_review(db,pid,pair['a_pk'],pair['b_pk'],new_state)
+                                set_review(db, pid, pair['a_pk'], pair['b_pk'], new_state)
                                 st.rerun()
                             except ValueError as exc:
                                 st.error(str(exc))
@@ -307,8 +352,8 @@ with review:
                                            key=f'llm_{pid}_{pair["a_pk"]}_{pair["b_pk"]}'):
                     with st.spinner('Lokales LLM bewertet den Grenzfall …'):
                         try:
-                            dec,why=assess(ra,rb,selected_model)
-                            save_llm(db,pid,pair['a_pk'],pair['b_pk'],dec,why,selected_model)
+                            dec, why = assess(ra, rb, selected_model)
+                            save_llm(db, pid, pair['a_pk'], pair['b_pk'], dec, why, selected_model)
                             st.rerun()
                         except Exception as exc:
                             st.error(f'KI-Prüfung nicht möglich: {exc}')
