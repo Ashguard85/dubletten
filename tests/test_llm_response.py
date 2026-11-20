@@ -6,6 +6,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'app'))
 import llm
 
+@pytest.fixture(autouse=True)
+def enable_ai_for_legacy_llm_tests(tmp_path, monkeypatch):
+    """Legacy response tests exercise enabled AI; default-off is tested separately."""
+    import sqlite3
+    import ai_control
+    dbpath = tmp_path / 'crm.sqlite'
+    with sqlite3.connect(dbpath) as db:
+        ai_control.set_enabled(db, True)
+    monkeypatch.setenv('DB_PATH', str(dbpath))
+
+
 A = {'company': 'Müller AG', 'street': 'Bahnhofstrasse 5', 'postcode': '6003', 'city': 'Luzern'}
 B = {'company': 'Mueller AG', 'street': 'Bahnhofstr. 5', 'postcode': '6003', 'city': 'Luzern'}
 

@@ -11,6 +11,7 @@ import streamlit as st
 
 from engine import (FIELDS, LABELS, comparison_diagnostics, save_llm, set_review)
 from llm import assess
+from ai_control import is_enabled as ai_is_enabled
 from review_data import (RISKS, STATES, STATE_LABELS, cockpit_counts,
                          conflict_flags, display_name, grid_rows, pair_page)
 
@@ -136,12 +137,14 @@ def _detail(db, pid, pair, is_splink, selected_model, installed, multi_keys, com
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))
-    if installed:
+    if installed and ai_is_enabled(db):
         if st.button('🤖 Dieses Paar lokal mit Ollama prüfen',
                      key=f'ai_{pid}_{pair["a_pk"]}_{pair["b_pk"]}',
                      use_container_width=True):
             with st.spinner('Ollama prüft den Kandidaten lokal …'):
                 try:
+                    if not ai_is_enabled(db):
+                        raise RuntimeError('KI wurde deaktiviert; Anfrage abgebrochen.')
                     decision, reason = assess(raw_a, raw_b, selected_model)
                     save_llm(db, pid, pair['a_pk'], pair['b_pk'], decision, reason, selected_model)
                     st.rerun()
@@ -150,7 +153,7 @@ def _detail(db, pid, pair, is_splink, selected_model, installed, multi_keys, com
 
 
 def _batch_review(db, pid, is_splink, selected_model, installed):
-    if not installed:
+    if not installed or not ai_is_enabled(db):
         st.caption('Ollama ist nicht verfügbar; manuelle Prüfung funktioniert weiterhin.')
         return
     with st.expander('🤖 Optionale KI-Stapelprüfung von Grenzfällen'):
@@ -178,6 +181,8 @@ def _batch_review(db, pid, is_splink, selected_model, installed):
             successes = 0
             for job in jobs:
                 try:
+                    if not ai_is_enabled(db):
+                        raise RuntimeError('KI wurde während der Stapelprüfung deaktiviert; Abbruch.')
                     decision, reason = assess(json.loads(job['aj']), json.loads(job['bj']), selected_model)
                     save_llm(db, pid, job['a_pk'], job['b_pk'], decision, reason, selected_model)
                     successes += 1
@@ -272,7 +277,7 @@ def _cockpit(db, pid, rows, is_splink, selected_model, installed, multi, view_sc
         st.info('Keine Treffer in der gewählten Arbeitsliste.')
 
 
-def render_review(db, pid, is_splink, selected_model, installed):
+def render_review(db, pid, is_splink, selected_model, installed, ai_enabled=False):
     st.markdown('### Treffer prüfen')
     view = st.segmented_control('Ansicht', VIEW_NAMES, default='Data Grid',
                                 key=_key(pid,'view'), selection_mode='single')
@@ -295,7 +300,8 @@ def render_review(db, pid, is_splink, selected_model, installed):
         risk = st.selectbox('Arbeitskategorie', RISKS, key=_key(pid,'risk'))
     st.caption('Splink: modellbasierter Score, nicht unabhängig validiert.' if is_splink
                else 'RapidFuzz: heuristischer Ähnlichkeitswert, keine Wahrscheinlichkeit.')
-    _batch_review(db,pid,is_splink,selected_model,installed)
+    if ai_enabled and ai_is_enabled(db):
+        _batch_review(db,pid,is_splink,selected_model,installed)
 
     size_col, page_col = st.columns([1,1])
     with size_col:
@@ -319,6 +325,8 @@ def render_review(db, pid, is_splink, selected_model, installed):
     if not rows and view != 'Review-Cockpit':
         st.info('Keine Kandidaten für diese Filter. Status, Mindestwert oder Arbeitskategorie anpassen.')
         return
+    # Re-check before exposing any analysis controls, even if another session disabled AI.
+    installed = bool(installed and ai_enabled and ai_is_enabled(db))
     multi = conflict_flags(db,pid,rows)
     scope = hashlib.sha256(f'{pid}:{state}:{minimum}:{search}:{risk}:{page}:{page_size}'.encode()).hexdigest()[:16]
     if view == 'Split-View':

@@ -14,7 +14,8 @@ from engine import (FIELDS, LABELS, best_guess, connect, delete_project,
                     list_projects, page_pairs, project_stats, read_upload,
                     run_matching, save_llm, set_review, comparison_diagnostics)
 from splink_matcher import run_splink_matching, available_models, train_model_from_reviews
-from llm import MODEL, assess, models
+from llm import MODEL, models
+from ai_control import ensure_schema as ensure_ai_schema, is_enabled as ai_is_enabled, set_enabled as set_ai_enabled
 from match_config import validate_config, BLOCK_LIMITS, model_signature
 from review_ui import render_review
 from migration import (is_dual, run_reference_check, reference_overview, reference_page,
@@ -53,9 +54,10 @@ if not st.session_state.get('authenticated', False):
 DB_PATH = os.environ.get('DB_PATH','/app/data/crm.sqlite')
 db = connect(DB_PATH)
 ensure_sw_schema(db)
+ensure_ai_schema(db)
 
 st.title('🔎 CRM-Dublettenprüfung')
-st.caption('GUI v1.8.2 · CRM A ↔ CRM B · RapidFuzz / Splink 5 · Hausnummern · Training · Ollama · ID-Export')
+st.caption('GUI v1.8.3 · CRM A ↔ CRM B · RapidFuzz / Splink 5 · Hausnummern · Training · optionale KI · ID-Export')
 st.info('🔒 CRM-Daten bleiben auf diesem Server. Die optionale KI verwendet nur das konfigurierte lokale Host-Ollama. Keine Cloud-API in der Anwendung.')
 
 with st.sidebar:
@@ -72,18 +74,36 @@ with st.sidebar:
     show_swisstopo = selected == '🏔️ swisstopo-Datenstand'
     show_address_service = selected == '📬 Schweizer Adressprüfung'
     st.divider()
-    installed = [] if show_address_service else models()
-    st.write('**Lokale KI**')
-    if show_address_service:
-        st.caption('Für die Schweizer Adressprüfung wird kein LLM benötigt.')
-        selected_model = MODEL
-    elif installed:
-        st.success('Ollama erreichbar')
-        selected_model = st.selectbox('Installiertes Modell', installed,
-                         index=installed.index(MODEL) if MODEL in installed else 0)
+    st.write('**Lokale KI (Ollama)**')
+    # Global setting is persisted in the CRM SQLite database; initial state OFF.
+    # Callback writes only on explicit interaction (not on unrelated reruns).
+    def _save_ai_switch():
+        set_ai_enabled(db, bool(st.session_state['local_ai_enabled_switch']))
+
+    # Always render the actual stored setting; a different session can disable AI.
+    current_ai = ai_is_enabled(db)
+    if st.session_state.get('local_ai_last_persisted') != current_ai:
+        st.session_state['local_ai_enabled_switch'] = current_ai
+        st.session_state['local_ai_last_persisted'] = current_ai
+    st.toggle('KI-Analyse aktivieren', key='local_ai_enabled_switch',
+              on_change=_save_ai_switch,
+              help='Standardmässig ausgeschaltet. Nur bei Aktivierung werden Anfragen an deinen lokalen Ollama-Dienst gesendet.')
+    ai_enabled = ai_is_enabled(db)
+    st.session_state['local_ai_last_persisted'] = ai_enabled
+    installed = []
+    selected_model = MODEL
+    if not ai_enabled:
+        st.caption('Ausgeschaltet: Keine Modellabfrage und keine KI-Analyse.')
+    elif show_address_service or show_swisstopo:
+        st.caption('Dieser Arbeitsbereich benötigt kein LLM.')
     else:
-        st.caption('Kein Modell erreichbar. Dublettenprüfung funktioniert ohne KI.')
-        selected_model = MODEL
+        installed = models()
+        if installed:
+            st.success('Ollama erreichbar')
+            selected_model = st.selectbox('Installiertes Modell', installed,
+                             index=installed.index(MODEL) if MODEL in installed else 0)
+        else:
+            st.warning('Aktiviert, aber kein lokales Modell erreichbar. Alle anderen Prüfungen funktionieren weiter.')
     st.divider()
     st.caption('Heuristische Scores sind KEINE Wahrscheinlichkeiten. Keine Treffer werden automatisch freigegeben.')
 
@@ -353,7 +373,7 @@ else:
 with review:
     if dual:
         st.info('Workflow 1: Nur System-A-Adressen OHNE System-B-Referenz (und ohne Ausschluss) werden mit sämtlichen B-Adressen verglichen. Bestätigungen erzeugen ausschliesslich eine Zuordnungsliste, keine Änderungen in CRM B.')
-    render_review(db, pid, is_splink, selected_model, bool(installed))
+    render_review(db, pid, is_splink, selected_model, bool(installed), ai_enabled=ai_enabled)
 
 
 if dual:

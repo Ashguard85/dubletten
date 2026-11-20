@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 
 import requests
 
+from ai_control import enabled_from_path
+
 
 def _ollama_url() -> str:
     raw = os.environ.get('OLLAMA_BASE_URL', 'http://host.docker.internal:11434').rstrip('/')
@@ -27,6 +29,9 @@ _session.trust_env = False
 
 
 def models():
+    # No Ollama request, including model discovery, while disabled.
+    if not enabled_from_path():
+        return []
     try:
         response = _session.get(OLLAMA + '/api/tags', timeout=5, allow_redirects=False)
         response.raise_for_status()
@@ -39,6 +44,8 @@ def models():
 
 
 def assess(record_a, record_b, model=MODEL):
+    if not enabled_from_path():
+        raise RuntimeError('Lokale KI ist deaktiviert. Zuerst in der Seitenleiste aktivieren.')
     if model not in models():
         raise ValueError('Das lokale Ollama-Modell ist nicht installiert, nicht erlaubt oder Ollama nicht erreichbar.')
     fields = ['company', 'first_name', 'last_name', 'street', 'postcode',
@@ -68,6 +75,8 @@ def assess(record_a, record_b, model=MODEL):
         ],
         'options': {'temperature': 0, 'num_predict': 512, 'num_ctx': 4096},
     }
+    if not enabled_from_path():
+        raise RuntimeError('Lokale KI wurde deaktiviert. Keine Anfrage an Ollama gesendet.')
     try:
         response = _session.post(OLLAMA + '/api/chat', json=payload,
                                  timeout=TIMEOUT, allow_redirects=False)

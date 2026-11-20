@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_v16_has_three_modes_and_no_stack_of_detail_expanders():
     main = (ROOT / 'app' / 'ui.py').read_text()
     views = (ROOT / 'app' / 'review_ui.py').read_text()
-    assert 'render_review(db, pid, is_splink, selected_model, bool(installed))' in main
+    assert 'render_review(db, pid, is_splink, selected_model, bool(installed), ai_enabled=ai_enabled)' in main
     assert "VIEW_NAMES = ('Data Grid', 'Split-View', 'Review-Cockpit')" in views
     assert "st.segmented_control('Ansicht'" in views
     assert 'st.dataframe(df,' in views

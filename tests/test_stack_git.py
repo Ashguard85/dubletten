@@ -42,7 +42,13 @@ def test_llm_no_proxy(monkeypatch):
     assert llm.MODEL == 'qwen3:14b'
 
 
-def test_local_models_only(monkeypatch):
+def test_local_models_only(monkeypatch, tmp_path):
+    import sqlite3
+    import ai_control
+    dbpath=tmp_path/'crm.sqlite'
+    with sqlite3.connect(dbpath) as db:
+        ai_control.set_enabled(db, True)
+    monkeypatch.setenv('DB_PATH',str(dbpath))
     class Response:
         is_redirect = False
         def raise_for_status(self): pass
