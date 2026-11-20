@@ -1,0 +1,64 @@
+# Portainer Web Editor / Docker Standalone: Git-Build wie beim Brettspielregal.
+# VOR dem Deployment: Repository URL erstellen/anpassen und Quellcode hochladen.
+# Keine CRM-Exporte in Git ablegen!
+x-app-build: &app-build
+  context: https://github.com/Ashguard85/CRM-Dubletten-Lokal.git#main
+
+x-app-environment: &app-environment
+  APP_TITLE: "CRM Dubletten Lokal"
+  DB_PATH: "/app/data/crm.sqlite"
+  APP_PASSWORD: "${APP_PASSWORD:?Bitte APP_PASSWORD als Portainer-Umgebungsvariable setzen}"
+  OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+  OLLAMA_TEXT_MODEL: "qwen3:14b"
+  OLLAMA_TIMEOUT_SECONDS: "600"
+  STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+  DO_NOT_TRACK: "1"
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  ALL_PROXY: ""
+  NO_PROXY: "host.docker.internal,localhost,127.0.0.1"
+
+services:
+  app:
+    image: crm-dubletten:local
+    pull_policy: build
+    build: *app-build
+    ports:
+      # Sicherer Standard: nur auf dem Linux-Host. Fuer Fernzugriff SSH-Tunnel.
+      # LAN-Zugang nur bewusst via APP_BIND_IP und zusaetzlicher Absicherung.
+      - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-8191}:8501"
+    volumes:
+      - /home/buebi/docker/crm-dubletten/data:/app/data
+      - /home/buebi/docker/crm-dubletten/backups:/app/backups
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment: *app-environment
+    networks:
+      - appnet
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health',timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 4
+      start_period: 40s
+    restart: unless-stopped
+    labels:
+      homepage.group: "CRM"
+      homepage.name: "CRM Dubletten"
+      homepage.href: "${APP_PUBLIC_URL:-http://127.0.0.1:8191}"
+      homepage.description: "Lokale CRM-Dublettenprüfung mit Ollama"
+      homepage.showStats: "true"
+
+networks:
+  appnet:
+    name: crm_dubletten_network
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-crm-dub

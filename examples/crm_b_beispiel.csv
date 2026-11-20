@@ -1,0 +1,5 @@
+CRM-ID;Firma;Strasse;PLZ;Ort;E-Mail;Telefon;UID
+B-01;Mueller Informatik;Bahnhofstr. 12;6003;Luzern;info@mueller.ch;+41 41 123 45 67;CHE111222333
+B-02;Heinrich Meier Elektro GmbH;Hauptstrasse 14;6048;Horw;;0041 41 456 78 90;
+B-03;Keller Müller AG;Hauptstrasse 12;6048;Horw;;;CHE-888.777.666
+B-04;Huber Gastronomie;Seeweg 3;6003;Luzern;;;
