@@ -1,75 +1,192 @@
 {
-  "name": "CRM-Dubletten v1.8.5 Komplettupdate mit synthetischen Testdaten",
-  "kind": "Komplettes Fokusmodus-Update für vorhandenes Repository – kein eigenständiges App-Image",
-  "source_test_counts": {
-    "crm_a": 66,
-    "crm_b": 59
-  },
+  "name": "CRM-Dubletten Lokal v1.8.5 – vollständige Neuinstallation",
+  "nature": "Eigenständige, konsolidierte Quellcodebasis; nicht byteidentischer Export einer vorhandenen produktiven Datenbank",
+  "packaged_on": "2026-11-20",
+  "contains_real_crm_data": false,
+  "contains_official_swisstopo_snapshot": false,
+  "initial_port": 8192,
+  "app_modules": 16,
+  "automated_tests_passed": 19,
   "files": [
     {
-      "path": "CHANGELOG.md",
-      "sha256": "71552d2a5e3b612321a2925c319d759026b2d456575ee92c010099d0d32c30f1",
-      "bytes": 970
+      "path": ".dockerignore",
+      "bytes": 110,
+      "sha256": "1cdc81ab55a859248802a5a09a526fe1ce9bc1d9b50f79c05c14cfd9ad307df8"
     },
     {
-      "path": "INSTALLATION.md",
-      "sha256": "21688f154069a50887c20dffbb421d726dd4aeab3698e712d91bff9187c3d39b",
-      "bytes": 2996
+      "path": ".gitignore",
+      "bytes": 284,
+      "sha256": "340a8955dd1a33ba5912ac8f2e10fd8d581fd47fc8d1bc401ee94ff7707697f3"
+    },
+    {
+      "path": ".streamlit/config.toml",
+      "bytes": 148,
+      "sha256": "11118bd3f09002b865c0925d9d06839f4d89eea7e39b0da95b46ddf0bc9b1f1f"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "bytes": 1040,
+      "sha256": "e7a55d7e7d8c17167b8e7ee8983d8c972ada768c9847f7c369a974a0bb7f4568"
+    },
+    {
+      "path": "Dockerfile",
+      "bytes": 843,
+      "sha256": "820102d5b073d930094924cc05d5ff2eb5a62080c2475e8976bcd8c5292ce605"
+    },
+    {
+      "path": "INSTALLATION-NEU.md",
+      "bytes": 8829,
+      "sha256": "e0bf59a7a689389867847d00d4142e430e2e1506579e05a9c529a2c015c01351"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3775,
+      "sha256": "b3d10f1a70548df597c060877d0be6cd3b069cd5960b1432de33120d5cfc5b96"
     },
     {
       "path": "TESTDATEN-SOLLRESULTATE.md",
-      "sha256": "56840b1cce37fdf57ee68acfa44214fb7ca78772678002f94e87bc9b0fb5f9d6",
-      "bytes": 1486
+      "bytes": 1486,
+      "sha256": "56840b1cce37fdf57ee68acfa44214fb7ca78772678002f94e87bc9b0fb5f9d6"
+    },
+    {
+      "path": "app/address_service.py",
+      "bytes": 15161,
+      "sha256": "ee1a38d6da326dc38b428609848a96d93bd07603321f91ce88c1d921b2fad52a"
+    },
+    {
+      "path": "app/address_service_ui.py",
+      "bytes": 5872,
+      "sha256": "6d5e6fd3b3e70c4d66227c9cccc64f60834eb4afe9c959632aa41fcfea836f02"
+    },
+    {
+      "path": "app/ai_control.py",
+      "bytes": 932,
+      "sha256": "e206dd32a0dabc970b7e0e7ec73d496ec0fd661e7981fb7b67e168497f833c30"
+    },
+    {
+      "path": "app/engine.py",
+      "bytes": 18131,
+      "sha256": "36b84540a803831fed7d5b6d851c8a7799e247a7141d4e0b6225ffc4d42934f3"
     },
     {
       "path": "app/focus_data.py",
-      "sha256": "3e59cab5015aefdb3c53f9a56ce5f0908008988370ac3ef1ddb65a3a6a2d506c",
-      "bytes": 5487
+      "bytes": 5487,
+      "sha256": "3e59cab5015aefdb3c53f9a56ce5f0908008988370ac3ef1ddb65a3a6a2d506c"
     },
     {
       "path": "app/focus_swiss_data.py",
-      "sha256": "566d8592ed5fc2e752e15f1b2b4ba8489f0f4753524b86531d8217d8a58aa755",
-      "bytes": 5590
+      "bytes": 5590,
+      "sha256": "566d8592ed5fc2e752e15f1b2b4ba8489f0f4753524b86531d8217d8a58aa755"
     },
     {
       "path": "app/focus_swiss_view.py",
-      "sha256": "e9d0390f0692573127b4a19e38b2fa57f57a59f46614b56b319798be33019edc",
-      "bytes": 6945
+      "bytes": 6945,
+      "sha256": "e9d0390f0692573127b4a19e38b2fa57f57a59f46614b56b319798be33019edc"
     },
     {
       "path": "app/focus_ui.py",
-      "sha256": "13e8f851f25c86ae9dd4ef85c7706a9c445600130b5e854f651f651e8ad50fda",
-      "bytes": 21194
+      "bytes": 21411,
+      "sha256": "f9bfad0c9e17ed52bc282f6eb1ab66b2ce2dc13bc3e5cca06eca17c716b71cae"
+    },
+    {
+      "path": "app/llm.py",
+      "bytes": 1893,
+      "sha256": "d1b24c1d7c475a5fa8ec75ab2b78f8464d06d09d54ee34be0ebc1c49a6cb735c"
+    },
+    {
+      "path": "app/match_config.py",
+      "bytes": 1786,
+      "sha256": "6bffb147ce7c6612e7ba605c7011ce02da0885f13a222a3a1b08a2783b011088"
+    },
+    {
+      "path": "app/migration.py",
+      "bytes": 7469,
+      "sha256": "926988a29cea564a4d98a74c98a80948092f4dcbdd203a96600edc038e76049c"
+    },
+    {
+      "path": "app/review_data.py",
+      "bytes": 1714,
+      "sha256": "b7c1648e7f3208b871e2928abf095e9e18d919a86e34cf2b7ed076e41da440d6"
+    },
+    {
+      "path": "app/review_ui.py",
+      "bytes": 4264,
+      "sha256": "c06c87bef07f34623f871e18b2211992ddeab6f4579d34c1d9bdd7c724fe9a48"
+    },
+    {
+      "path": "app/splink_matcher.py",
+      "bytes": 9549,
+      "sha256": "d4cc0b7bdc2e1aaac2d97691243a4189deb55087a35203e8f802803b2464a0f4"
+    },
+    {
+      "path": "app/swisstopo.py",
+      "bytes": 10463,
+      "sha256": "35d83feac22de4fc6bef03727f3580d6ad2371139bf15d18a6601e7122502fbb"
+    },
+    {
+      "path": "app/ui.py",
+      "bytes": 15263,
+      "sha256": "e11834bf5bd68729ad3015bf3427fac9c788d772453679d186689bbf2a0fb58a"
     },
     {
       "path": "examples/CRM_A_Testdaten_Fokusmodus.csv",
-      "sha256": "47f9aa251d27ae5868d429c42edd2dcec1dd0aee048d93da71b1c579d1c9e6e8",
-      "bytes": 9646
+      "bytes": 9646,
+      "sha256": "47f9aa251d27ae5868d429c42edd2dcec1dd0aee048d93da71b1c579d1c9e6e8"
     },
     {
       "path": "examples/CRM_B_Testdaten_Fokusmodus.csv",
-      "sha256": "1b99a24cce8f4f7f2148796ee454e8882a6a5493a12e2332610c94e85cf2f9f9",
-      "bytes": 6510
+      "bytes": 6510,
+      "sha256": "1b99a24cce8f4f7f2148796ee454e8882a6a5493a12e2332610c94e85cf2f9f9"
+    },
+    {
+      "path": "examples/TEST-SWISSTOPO-KLEIN.csv",
+      "bytes": 185,
+      "sha256": "e2c9fa8b33ad30d0dec32057b25e99dd96bbe73456d6ef83769465999ce25c99"
+    },
+    {
+      "path": "requirements.txt",
+      "bytes": 101,
+      "sha256": "cb613edb5f87036f6bfba0501ef98ca50203834e6be1c41651dedd7f790be071"
     },
     {
       "path": "scripts/apply_focus_patch.py",
-      "sha256": "d102e51517de0500f244afad883242c28e6b4642df564add70136cc3e9a07e4c",
-      "bytes": 3216
+      "bytes": 3216,
+      "sha256": "d102e51517de0500f244afad883242c28e6b4642df564add70136cc3e9a07e4c"
     },
     {
       "path": "scripts/apply_swiss_focus_patch.py",
-      "sha256": "30e47a080237493e0c9c3c006a84a293572f70f5f872f4899b63594fc19e21a9",
-      "bytes": 3326
+      "bytes": 3326,
+      "sha256": "30e47a080237493e0c9c3c006a84a293572f70f5f872f4899b63594fc19e21a9"
+    },
+    {
+      "path": "scripts/test_local.sh",
+      "bytes": 128,
+      "sha256": "e0ffbf51c1d54d6f579ea38f2ae1129d88d51d9e385b922c3d61e172c4695c3b"
+    },
+    {
+      "path": "stack-portainer-git.yml",
+      "bytes": 1630,
+      "sha256": "fa855753fa7580f24851fed39a4489851b4d31af15724dabe62950965da46c3e"
+    },
+    {
+      "path": "stack-portainer-local.yml",
+      "bytes": 981,
+      "sha256": "c59ce10162473a80d7ff954bb7a2d498bb0fa1c9f816c229d2544fea32004a0e"
     },
     {
       "path": "tests/test_focus.py",
-      "sha256": "7024b7fcc698864b09298bc1576c25e5682fe8df681f5c9e182026dcaddce6d9",
-      "bytes": 5857
+      "bytes": 5857,
+      "sha256": "7024b7fcc698864b09298bc1576c25e5682fe8df681f5c9e182026dcaddce6d9"
     },
     {
       "path": "tests/test_focus_swiss_v185.py",
-      "sha256": "217c79a355a5debba27eb4755da345c1b08374c83f7de8921c942235697f8e08",
-      "bytes": 9232
+      "bytes": 9232,
+      "sha256": "217c79a355a5debba27eb4755da345c1b08374c83f7de8921c942235697f8e08"
+    },
+    {
+      "path": "tests/test_install_integration.py",
+      "bytes": 5870,
+      "sha256": "6c02034ef78f10aae96446c78946c023de0d0980796122d0d3438cb347fd8d56"
     }
   ]
 }

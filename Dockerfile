@@ -17,7 +17,6 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && mkdir -p /app/data /app/backups \
     && chown -R 10001:10001 /app /opt/app
 COPY --chown=10001:10001 app/ ./
-# Streamlit settings are env-based: no hidden .streamlit folder required in Git.
 USER 10001:10001
 EXPOSE 8501
 CMD ["streamlit", "run", "ui.py", "--server.address=0.0.0.0", "--server.port=8501"]

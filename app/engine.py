@@ -1,568 +1,267 @@
-"""Local, explainable cross-CRM matching. No external network calls."""
-from __future__ import annotations
+"""Local CSV/XLSX data import, bounded CRM matching and review storage.
 
-import io
-import json
-import re
-import sqlite3
-import unicodedata
+No CRM API writes. Source values stored both as user columns and normalized fields.
+"""
+from __future__ import annotations
+import io, json, os, re, sqlite3, unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-
 import pandas as pd
 from rapidfuzz import fuzz
+BLOCKS=[("uid",2500),("email",1500),("phone",500),("zip_name",450),("zip_street",250),("city_name",200),("name_head",100)]
 
-FIELDS = ('id', 'company', 'first_name', 'last_name', 'street', 'house_number', 'postcode',
-          'city', 'country', 'email', 'phone', 'uid')
-LABELS = {
-    'id': 'Eindeutige CRM-ID', 'company': 'Firma / Organisation',
-    'first_name': 'Vorname', 'last_name': 'Nachname', 'street': 'Strasse (mit oder ohne Hausnummer)', 'house_number': 'Hausnummer (optional separates Feld)',
-    'postcode': 'PLZ', 'city': 'Ort', 'country': 'Land', 'email': 'E-Mail',
-    'phone': 'Telefon', 'uid': 'UID / MWST-Nummer / Handelsregister-ID',
-}
-ALIASES = {
-    'id': ['id', 'recordid', 'accountid', 'kontaktid', 'kundennummer', 'customerid', 'crm_id', 'nr'],
-    'company': ['firma', 'firmenname', 'company', 'companyname', 'organisation', 'organization', 'name1', 'accountname'],
-    'first_name': ['vorname', 'firstname', 'first_name', 'givenname'],
-    'last_name': ['nachname', 'lastname', 'last_name', 'surname'],
-    'street': ['strasse', 'straße', 'street', 'address', 'adresse', 'adresszeile1', 'address1'],
-    'house_number': ['hausnummer', 'hausnr', 'house_number', 'housenumber', 'street_number', 'streetnumber', 'nr_hauptadresse'],
-    'postcode': ['plz', 'postcode', 'zip', 'zipcode', 'postleitzahl'],
-    'city': ['ort', 'stadt', 'city', 'town'],
-    'country': ['land', 'country'],
-    'email': ['email', 'e_mail', 'e-mail', 'mail'],
-    'phone': ['telefon', 'telephone', 'phone', 'tel', 'mobile', 'mobil'],
-    'uid': ['uid', 'mwst', 'vat', 'vatnumber', 'ustid', 'taxid'],
+FIELDS=('id','company','first_name','last_name','street','house_number','postcode','city','country','email','phone','uid')
+LABELS=dict(zip(FIELDS,('CRM-ID','Firma / Organisation','Vorname','Nachname','Strasse / Adresse','Hausnummer (separat)','PLZ','Ort','Land','E-Mail','Telefon','UID / MWST')))
+ALIASES={
+ 'id':('ID','CRM_ID','Kundennummer','AccountID'),
+ 'company':('Firma','Firmenname','Company','Organisation','Name1'),
+ 'first_name':('Vorname','FirstName','GivenName'),
+ 'last_name':('Nachname','LastName','Surname'),
+ 'street':('Strasse','Straße','Street','Adresse','Address','Adresszeile1'),
+ 'house_number':('Hausnummer','Hausnr','House_Number','Housenumber'),
+ 'postcode':('PLZ','Postleitzahl','Postcode','Zip'),
+ 'city':('Ort','Stadt','City','Town'),
+ 'country':('Land','Country'),
+ 'email':('Email','E-Mail','Mail'),
+ 'phone':('Telefon','Phone','Tel','Mobil'),
+ 'uid':('UID','MWST','VAT','VatNumber'),
 }
 
-
-def now():
-    return datetime.now(timezone.utc).isoformat(timespec='seconds')
-
-
-def plain(s):
-    if s is None or pd.isna(s):
-        return ''
-    return str(s).strip()
-
-
-def norm(s):
-    s = plain(s).lower().replace('ä', 'ae').replace('ö', 'oe').replace('ü', 'ue').replace('ß', 'ss')
-    s = unicodedata.normalize('NFKD', s)
-    s = ''.join(ch for ch in s if not unicodedata.combining(ch))
-    s = re.sub(r'[^a-z0-9]+', ' ', s)
-    return re.sub(r'\s+', ' ', s).strip()
-
-
-def norm_name(s):
-    s = norm(s)
-    # Juristische Endungen fuer Aehnlichkeitsvergleich entfernen; Original bleibt erhalten.
-    while re.search(r'(?:^| )(?:ag|gmbh|sa|sarl|s rl|ltd|inc|kg|llc)$', s):
-        s = re.sub(r'(?:^| )(?:ag|gmbh|sa|sarl|s rl|ltd|inc|kg|llc)$', '', s).strip()
-    return s
-
-
-def norm_street(s):
-    s = norm(s)
-    s = re.sub(r'\b([a-z]+)str\b', r'\1strasse', s)
-    s = re.sub(r'\b(strasse|str|street|stras|strass)\b', 'strasse', s)
-    s = re.sub(r'\b(avenue|ave)\b', 'avenue', s)
-    s = re.sub(r'\b(platz|pl)\b', 'platz', s)
-    return s
-
-
-def norm_house_number(s):
-    """Keep suffixes and ranges (12a, 12/14), not just digits."""
-    number = plain(s).lower().strip().replace('–', '-').replace('—', '-')
-    number = re.sub(r'\s*([/-])\s*', r'\1', number)
-    number = re.sub(r'(?<=\d)\s+(?=[a-z]$)', '', number)
-    return number if re.fullmatch(r'\d{1,5}[a-z]?(?:[/-]\d{1,5}[a-z]?)?', number) else ''
-
-
+def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
+def plain(v):
+ if v is None:return ''
+ try:
+  if pd.isna(v):return ''
+ except (ValueError,TypeError):pass
+ return str(v).strip()
+def norm(v):
+ s=plain(v).lower().replace('ä','ae').replace('ö','oe').replace('ü','ue').replace('ß','ss')
+ s=unicodedata.normalize('NFKD',s)
+ return re.sub(r'\s+',' ',re.sub('[^a-z0-9]+',' ',''.join(c for c in s if not unicodedata.combining(c)))).strip()
+def norm_name(v):
+ s=norm(v)
+ return re.sub(r'\b(ag|gmbh|sa|sarl|ltd|inc|llc|kg)\b$','',s).strip()
+def norm_street(v):
+ s=norm(v)
+ s=re.sub(r'\b([a-z]+)str\b',r'\1strasse',s)
+ return re.sub(r'\b(str|street|stras|strass)\b','strasse',s)
+def norm_house_number(v):
+ s=plain(v).lower().replace('–','-').replace('—','-')
+ s=re.sub(r'\s*([/-])\s*',r'\1',s)
+ s=re.sub(r'(?<=\d)\s+(?=[a-z]$)','',s)
+ return s if re.fullmatch(r'\d{1,5}[a-z]?(?:[/-]\d{1,5}[a-z]?)?',s) else ''
 def split_street_house(street, explicit_number=''):
-    """Conservative CH/DE address split, keeping original data untouched.
-
-    No guessing for ambiguous names such as 'Route 66' or 'Strasse des 17. Juni'.
-    """
-    raw = plain(street).strip().replace('–', '-').replace('—', '-')
-    explicit = norm_house_number(explicit_number)
-    if not raw:
-        return '', explicit, bool(plain(explicit_number) and not explicit)
-    trail = re.fullmatch(r'(.+?)[,\s]+(\d{1,5}\s?[a-zA-Z]?(?:\s*[-/]\s*\d{1,5}\s?[a-zA-Z]?)?)', raw)
-    lead = re.fullmatch(r'(\d{1,5}\s?[a-zA-Z]?(?:\s*[-/]\s*\d{1,5}\s?[a-zA-Z]?)?)[,\s]+(.+)', raw)
-    prefix = ''
-    extracted = ''
-    if trail:
-        prefix, extracted = trail.group(1).strip(), norm_house_number(trail.group(2))
-        if norm(prefix) in ('route', 'highway', 'strasse', 'street', 'rue'):
-            prefix, extracted = '', ''
-    elif lead:
-        extracted = norm_house_number(lead.group(1))
-        prefix = lead.group(2).strip()
-    if explicit:
-        # An explicit CRM house-number column takes precedence. A mismatching
-        # number extracted from the street field is flagged rather than hidden.
-        conflict = bool(extracted and extracted != explicit)
-        return norm_street(prefix if extracted else raw), explicit, conflict
-    return (norm_street(prefix), extracted, False) if extracted else (norm_street(raw), '', False)
-
-
-def norm_phone(s):
-    digits = re.sub(r'\D', '', plain(s))
-    if digits.startswith('0041'):
-        digits = '41' + digits[4:]
-    elif len(digits) == 10 and digits.startswith('0'):
-        digits = '41' + digits[1:]
-    elif len(digits) == 9:
-        digits = '41' + digits
-    return digits if len(digits) >= 8 else ''
-
-
-def norm_uid(s):
-    return re.sub(r'[^A-Z0-9]', '', plain(s).upper())
-
-
-def best_guess(columns, field):
-    indexed = {norm(c).replace(' ', ''): c for c in columns}
-    for alias in ALIASES[field]:
-        key = norm(alias).replace(' ', '')
-        if key in indexed:
-            return indexed[key]
-    return ''
-
-
-def read_upload(file):
-    content = file.getvalue()
-    if len(content) > 60 * 1024 * 1024:
-        raise ValueError('Datei zu gross (maximal 60 MB pro Export).')
-    if file.name.lower().endswith('.xlsx'):
-        frame = pd.read_excel(io.BytesIO(content), dtype=str, engine='openpyxl')
-    elif file.name.lower().endswith('.csv'):
-        err = None
-        for enc in ('utf-8-sig', 'cp1252', 'latin-1'):
-            try:
-                frame = pd.read_csv(io.BytesIO(content), sep=None, engine='python',
-                                    dtype=str, keep_default_na=False, encoding=enc,
-                                    on_bad_lines='error')
-                break
-            except (UnicodeError, pd.errors.ParserError) as exc:
-                err = exc
-        else:
-            raise ValueError(f'CSV nicht lesbar: {err}')
-    else:
-        raise ValueError('Nur .csv und .xlsx werden unterstuetzt.')
-    if frame.empty:
-        raise ValueError('Die Datei enthaelt keine Daten.')
-    if len(frame) > 150_000:
-        raise ValueError('Maximal 150’000 Datensaetze pro Quelle in dieser Version.')
-    frame.columns = [str(c).strip() for c in frame.columns]
-    if len(set(frame.columns)) != len(frame.columns):
-        raise ValueError('Doppelte Spaltennamen im Export. Bitte zuerst umbenennen.')
-    frame = frame.fillna('').astype(str)
-    return frame
-
-
-def row_values(row, mapping):
-    return {field: plain(row[mapping[field]]) if mapping.get(field) else '' for field in FIELDS}
-
-
-def validate_mapping(frame, mapping, side):
-    if not mapping.get('id'):
-        raise ValueError(f'CRM {side}: Eine eindeutige ID-Spalte muss zugeordnet sein.')
-    if not any(mapping.get(k) for k in ('company', 'last_name', 'email', 'uid')):
-        raise ValueError(f'CRM {side}: Firma, Name, E-Mail oder UID erforderlich.')
-    ids = frame[mapping['id']].map(plain)
-    if (ids == '').any() or ids.duplicated().any():
-        raise ValueError(f'CRM {side}: Leere oder doppelte IDs. Bitte vor dem Import bereinigen.')
-
-
+ raw=plain(street).replace('–','-').replace('—','-')
+ explicit=norm_house_number(explicit_number)
+ if not raw:return '',explicit,bool(plain(explicit_number) and not explicit)
+ m=re.fullmatch(r'(.+?)[,\s]+(\d{1,5}\s?[a-zA-Z]?(?:\s*[-/]\s*\d{1,5}\s?[a-zA-Z]?)?)',raw)
+ r=re.fullmatch(r'(\d{1,5}\s?[a-zA-Z]?)[,\s]+(.+)',raw)
+ pre,num='',''
+ if m:
+  pre,num=m.group(1),norm_house_number(m.group(2))
+  if norm(pre) in ('route','highway','rue','strasse','street'):pre,num='',''
+ elif r: pre,num=r.group(2),norm_house_number(r.group(1))
+ if explicit:return norm_street(pre if num else raw),explicit,bool(num and num!=explicit)
+ return (norm_street(pre),num,False) if num else (norm_street(raw),'',False)
+def norm_phone(v):
+ s=re.sub(r'\D','','' if v is None else str(v))
+ if s.startswith('0041'):s='41'+s[4:]
+ elif len(s)==10 and s.startswith('0'):s='41'+s[1:]
+ elif len(s)==9:s='41'+s
+ return s if len(s)>=8 else ''
+def norm_uid(v):return re.sub('[^A-Z0-9]','',plain(v).upper())
+def best_guess(columns,field):
+ indexed={norm(c).replace(' ',''):c for c in columns}
+ return next((indexed[norm(alias).replace(' ','')] for alias in ALIASES[field] if norm(alias).replace(' ','') in indexed),'')
+def read_upload(upload):
+ raw=upload.getvalue()
+ if len(raw)>60*1024**2:raise ValueError('Einzeldatei zu gross (>60 MB).')
+ if upload.name.lower().endswith('.xlsx'):
+  frame=pd.read_excel(io.BytesIO(raw),dtype=str,engine='openpyxl',keep_default_na=False)
+ elif upload.name.lower().endswith('.csv'):
+  for enc in ('utf-8-sig','cp1252','latin-1'):
+   try:
+    frame=pd.read_csv(io.BytesIO(raw),sep=None,engine='python',dtype=str,keep_default_na=False,encoding=enc,on_bad_lines='error');break
+   except (UnicodeError,pd.errors.ParserError):continue
+  else:raise ValueError('CSV nicht lesbar.')
+ else:raise ValueError('Bitte CSV oder XLSX laden.')
+ if frame.empty or len(frame)>150000:raise ValueError('Datei leer oder mehr als 150’000 Zeilen.')
+ frame.columns=[plain(c) for c in frame.columns]
+ if not all(frame.columns) or len(set(frame.columns))!=len(frame.columns):raise ValueError('Spaltennamen müssen eindeutig sein.')
+ return frame.fillna('').astype(str)
 def to_record(raw):
-    company = norm_name(raw['company'])
-    person = norm_name(' '.join(x for x in (raw['first_name'], raw['last_name']) if x))
-    # Unterschiedliche Ansprechpartner bei derselben Firma nicht blind vereinen.
-    name_n = ' '.join(part for part in (company,person) if part)
-    street_name, house_number, address_conflict = split_street_house(
-        raw['street'], raw.get('house_number', ''))
-    street_n = norm_street(raw['street']) or street_name
-    postal_n = re.sub(r'\W', '', plain(raw['postcode']).upper())
-    if postal_n.startswith('CH') and len(postal_n) == 6 and postal_n[2:].isdigit():
-        postal_n = postal_n[2:]
-    city_n = norm(raw['city'])
-    email_n = plain(raw['email']).lower().strip()
-    phone_n = norm_phone(raw['phone'])
-    uid_n = norm_uid(raw['uid'])
-    return {
-        'name': name_n, 'street': street_n, 'street_name': street_name,
-        'house_number': house_number, 'address_conflict': int(address_conflict), 'postal': postal_n,
-        'city': city_n, 'email': email_n, 'phone': phone_n, 'uid': uid_n,
-        'zip_name': f'{postal_n}|{name_n[:6]}' if postal_n and len(name_n) >= 4 else '',
-        'zip_street': f'{postal_n}|{street_n[:7]}' if postal_n and len(street_n) >= 5 else '',
-        'city_name': f'{city_n[:8]}|{name_n[:8]}' if city_n and len(name_n) >= 5 else '',
-        'name_head': name_n[:10] if len(name_n) >= 7 else '',
-        'street_number': house_number,
-    }
+ sn,house,conflict=split_street_house(raw['street'],raw.get('house_number',''))
+ name=' '.join(x for x in (norm_name(raw['company']),norm_name(' '.join([raw['first_name'],raw['last_name']]))) if x)
+ postal=re.sub(r'\W','',plain(raw['postcode']).upper())
+ if postal.startswith('CH') and len(postal)==6:postal=postal[2:]
+ city=norm(raw['city']);street=norm_street(raw['street']);email=plain(raw['email']).lower();phone=norm_phone(raw['phone']);uid=norm_uid(raw['uid'])
+ return dict(name=name,street=street,street_name=sn,house_number=house,address_conflict=int(conflict),postal=postal,city=city,email=email,phone=phone,uid=uid,zip_name=(postal+'|'+name[:6]) if postal and len(name)>=4 else '',zip_street=(postal+'|'+sn[:7]) if postal and len(sn)>=5 else '',city_name=(city[:8]+'|'+name[:8]) if city and len(name)>=5 else '',name_head=name[:10] if len(name)>=7 else '',street_number=house)
 
+def connect(path):
+ path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+ db=sqlite3.connect(path,timeout=60);db.row_factory=sqlite3.Row
+ db.execute('PRAGMA foreign_keys=ON');db.execute('PRAGMA journal_mode=WAL');db.execute('PRAGMA busy_timeout=60000')
+ db.executescript('''
+ CREATE TABLE IF NOT EXISTS projects(project_id INTEGER PRIMARY KEY,title TEXT NOT NULL,created_at TEXT NOT NULL,
+ a_count INTEGER NOT NULL,b_count INTEGER NOT NULL,candidate_count INTEGER DEFAULT 0,engine TEXT DEFAULT 'rapidfuzz',
+ match_model_info TEXT DEFAULT '',mode TEXT NOT NULL DEFAULT 'legacy',ref_column TEXT NOT NULL DEFAULT '');
+ CREATE TABLE IF NOT EXISTS records(pk INTEGER PRIMARY KEY,project_id INTEGER NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+ side TEXT NOT NULL CHECK(side IN('A','B')),source_id TEXT NOT NULL,original_json TEXT NOT NULL,source_json TEXT NOT NULL,
+ name TEXT NOT NULL,street TEXT NOT NULL,postal TEXT NOT NULL,city TEXT NOT NULL,email TEXT NOT NULL,phone TEXT NOT NULL,
+ uid TEXT NOT NULL,zip_name TEXT NOT NULL,zip_street TEXT NOT NULL,city_name TEXT NOT NULL,name_head TEXT NOT NULL,
+ street_number TEXT NOT NULL,street_name TEXT NOT NULL DEFAULT '',house_number TEXT NOT NULL DEFAULT '',
+ address_conflict INTEGER NOT NULL DEFAULT 0,b_reference TEXT NOT NULL DEFAULT '',in_scope INTEGER NOT NULL DEFAULT 1,
+ UNIQUE(project_id,side,source_id));
+ CREATE TABLE IF NOT EXISTS pairs(project_id INTEGER NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+ a_pk INTEGER NOT NULL REFERENCES records(pk) ON DELETE CASCADE,b_pk INTEGER NOT NULL REFERENCES records(pk) ON DELETE CASCADE,
+ score INTEGER NOT NULL,reason TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'offen',llm_decision TEXT NOT NULL DEFAULT '',
+ llm_reason TEXT NOT NULL DEFAULT '',llm_model TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL,match_probability REAL,
+ PRIMARY KEY(project_id,a_pk,b_pk));
+ CREATE TABLE IF NOT EXISTS trained_models(model_id INTEGER PRIMARY KEY,project_id INTEGER NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+ created_at TEXT NOT NULL,config_json TEXT NOT NULL,model_path TEXT NOT NULL,statistics_json TEXT NOT NULL DEFAULT '{}',
+ training_type TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS idx_record_side ON records(project_id,side);
+ CREATE INDEX IF NOT EXISTS idx_pair_score ON pairs(project_id,score);
+ CREATE INDEX IF NOT EXISTS idx_pair_state ON pairs(project_id,state);
+ ''')
+ # Compatible migration from older installed schema.
+ for table, cols in {'projects':{'mode':"TEXT NOT NULL DEFAULT 'legacy'",'ref_column':"TEXT NOT NULL DEFAULT ''",'engine':"TEXT NOT NULL DEFAULT 'rapidfuzz'",'match_model_info':"TEXT NOT NULL DEFAULT ''"},'records':{'street_name':"TEXT NOT NULL DEFAULT ''",'house_number':"TEXT NOT NULL DEFAULT ''",'address_conflict':'INTEGER NOT NULL DEFAULT 0','b_reference':"TEXT NOT NULL DEFAULT ''",'in_scope':'INTEGER NOT NULL DEFAULT 1'},'pairs':{'match_probability':'REAL'}}.items():
+  known={r['name'] for r in db.execute(f'PRAGMA table_info({table})')}
+  for key,ddl in cols.items():
+   if key not in known:db.execute(f'ALTER TABLE {table} ADD COLUMN {key} {ddl}')
+ from migration import ensure_schema as migrate
+ migrate(db);db.commit();return db
 
-def connect(db_path):
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(db_path, timeout=60)
-    db.row_factory = sqlite3.Row
-    db.execute('PRAGMA foreign_keys=ON')
-    db.execute('PRAGMA journal_mode=WAL')
-    db.execute('PRAGMA busy_timeout=60000')
-    db.executescript('''
-    CREATE TABLE IF NOT EXISTS projects (
-        project_id INTEGER PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL,
-        a_count INTEGER NOT NULL, b_count INTEGER NOT NULL, candidate_count INTEGER NOT NULL DEFAULT 0,
-        engine TEXT NOT NULL DEFAULT 'rapidfuzz', match_model_info TEXT NOT NULL DEFAULT ''
-    );
-    CREATE TABLE IF NOT EXISTS records (
-        pk INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-        side TEXT NOT NULL CHECK(side IN ('A','B')), source_id TEXT NOT NULL,
-        original_json TEXT NOT NULL, source_json TEXT NOT NULL, name TEXT NOT NULL, street TEXT NOT NULL,
-        postal TEXT NOT NULL, city TEXT NOT NULL, email TEXT NOT NULL,
-        phone TEXT NOT NULL, uid TEXT NOT NULL, zip_name TEXT NOT NULL,
-        zip_street TEXT NOT NULL, city_name TEXT NOT NULL, name_head TEXT NOT NULL,
-        street_number TEXT NOT NULL,
-        street_name TEXT NOT NULL DEFAULT '', house_number TEXT NOT NULL DEFAULT '',
-        address_conflict INTEGER NOT NULL DEFAULT 0,
-        UNIQUE(project_id,side,source_id)
-    );
-    CREATE TABLE IF NOT EXISTS pairs (
-        project_id INTEGER NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-        a_pk INTEGER NOT NULL REFERENCES records(pk) ON DELETE CASCADE,
-        b_pk INTEGER NOT NULL REFERENCES records(pk) ON DELETE CASCADE,
-        score INTEGER NOT NULL,
-        reason TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'offen',
-        llm_decision TEXT NOT NULL DEFAULT '', llm_reason TEXT NOT NULL DEFAULT '',
-        llm_model TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
-        match_probability REAL,
-        PRIMARY KEY(project_id,a_pk,b_pk)
-    );
-    CREATE INDEX IF NOT EXISTS idx_records_project_side ON records(project_id,side);
-    CREATE INDEX IF NOT EXISTS idx_pairs_project_score ON pairs(project_id,score DESC);
-    CREATE INDEX IF NOT EXISTS idx_pairs_state ON pairs(project_id,state);
-    CREATE INDEX IF NOT EXISTS idx_pairs_project_b ON pairs(project_id,b_pk,a_pk);
-    ''')
-    # Safe schema migration for existing persistent SQLite databases.
-    project_columns = {r['name'] for r in db.execute('PRAGMA table_info(projects)')}
-    if 'engine' not in project_columns:
-        db.execute("ALTER TABLE projects ADD COLUMN engine TEXT NOT NULL DEFAULT 'rapidfuzz'")
-    if 'match_model_info' not in project_columns:
-        db.execute("ALTER TABLE projects ADD COLUMN match_model_info TEXT NOT NULL DEFAULT ''")
-    record_columns = {r['name'] for r in db.execute('PRAGMA table_info(records)')}
-    has_new_address_fields = 'street_name' in record_columns
-    for column, ddl in [('street_name', "TEXT NOT NULL DEFAULT ''"),
-                        ('house_number', "TEXT NOT NULL DEFAULT ''"),
-                        ('address_conflict', 'INTEGER NOT NULL DEFAULT 0')]:
-        if column not in record_columns:
-            db.execute(f'ALTER TABLE records ADD COLUMN {column} {ddl}')
-    if not has_new_address_fields:
-        # Upgrade existing persisted records without changing their source fields.
-        cursor = db.execute('SELECT pk,original_json,street FROM records')
-        rows = cursor.fetchall()
-        for item in rows:
-            raw = json.loads(item['original_json'])
-            st, no, conflict = split_street_house(raw.get('street') or item['street'],
-                                                 raw.get('house_number', ''))
-            db.execute('UPDATE records SET street_name=?,house_number=?,address_conflict=? WHERE pk=?',
-                       (st, no, int(conflict), item['pk']))
-    db.execute('''CREATE TABLE IF NOT EXISTS trained_models (
-        model_id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-        created_at TEXT NOT NULL, config_json TEXT NOT NULL, model_path TEXT NOT NULL,
-        statistics_json TEXT NOT NULL DEFAULT '{}', training_type TEXT NOT NULL
-    )''')
-    pair_columns = {r['name'] for r in db.execute('PRAGMA table_info(pairs)')}
-    if 'match_probability' not in pair_columns:
-        db.execute('ALTER TABLE pairs ADD COLUMN match_probability REAL')
-    for col in ('uid', 'email', 'phone', 'zip_name', 'zip_street', 'city_name', 'name_head'):
-        db.execute(f'CREATE INDEX IF NOT EXISTS idx_block_{col} ON records(project_id,side,{col})')
-    from migration import ensure_schema
-    ensure_schema(db)
-    db.commit()
-    return db
+def import_project(db,title,fa,ma,fb,mb,engine='rapidfuzz',mode='dual',a_ref_column='',a_exclude_column='',exclude_values=(),empty_reference_markers=()):
+ if engine not in ('rapidfuzz','splink5'):raise ValueError('Unbekannte Engine.')
+ if mode not in ('dual','legacy'):raise ValueError('Unbekannter Modus.')
+ if mode=='dual' and a_ref_column not in fa.columns:raise ValueError('B-Referenzspalte aus A fehlt.')
+ for frame,m,side in ((fa,ma,'A'),(fb,mb,'B')):
+  if not m.get('id') or m['id'] not in frame.columns:raise ValueError(f'CRM {side}: ID-Spalte erforderlich.')
+  ids=frame[m['id']].map(plain)
+  if ids.eq('').any() or ids.duplicated().any():raise ValueError(f'CRM {side}: Leere oder doppelte IDs.')
+  if not any(m.get(k) for k in ('company','last_name','email','uid')):raise ValueError(f'CRM {side}: Name, Firma, E-Mail oder UID zuordnen.')
+ exclusions={plain(x).casefold() for x in exclude_values};missing={plain(x).casefold() for x in empty_reference_markers}
+ cols='project_id side source_id original_json source_json name street postal city email phone uid zip_name zip_street city_name name_head street_number street_name house_number address_conflict b_reference in_scope'.split()
+ with db:
+  pid=db.execute('INSERT INTO projects(title,created_at,a_count,b_count,engine,mode,ref_column) VALUES(?,?,?,?,?,?,?)',
+    (plain(title)[:140] or 'CRM-Prüfung',now(),len(fa),len(fb),engine,mode,a_ref_column)).lastrowid
+  for side,frame,m in (('A',fa,ma),('B',fb,mb)):
+   batch=[]
+   for row in frame.itertuples(index=False,name=None):
+    original=dict(zip(frame.columns,[plain(x) for x in row]))
+    raw={field:original.get(m.get(field), '') for field in FIELDS}
+    record=to_record(raw)
+    bref=original.get(a_ref_column,'') if side=='A' and mode=='dual' else ''
+    if bref.casefold() in missing:bref=''
+    inscope=not (side=='A' and a_exclude_column and original.get(a_exclude_column,'').casefold() in exclusions)
+    batch.append((pid,side,raw['id'],json.dumps(raw,ensure_ascii=False),json.dumps(original,ensure_ascii=False),
+     *(record[k] for k in ('name','street','postal','city','email','phone','uid','zip_name','zip_street','city_name','name_head','street_number','street_name','house_number','address_conflict')),bref,int(inscope)))
+    if len(batch)==1000:
+     db.executemany(f"INSERT INTO records({','.join(cols)}) VALUES({','.join('?' for _ in cols)})",batch);batch=[]
+   if batch:db.executemany(f"INSERT INTO records({','.join(cols)}) VALUES({','.join('?' for _ in cols)})",batch)
+ return pid
 
+def score_pair(a,b):
+ weighted=[];explain=[]
+ for k,w in (('name',.48),('street',.26),('postal',.16),('city',.10)):
+  if a[k] and b[k]:
+   value=int(a[k]==b[k])*100 if k=='postal' else fuzz.WRatio(a[k],b[k]);weighted.append((w,value/100))
+   if value>=90:explain.append(k+' ähnlich')
+ if not weighted:return 0,'Unzureichende Daten'
+ score=100*sum(w*v for w,v in weighted)/sum(w for w,_ in weighted)
+ if a['uid'] and b['uid']:
+  if a['uid']==b['uid']:score=max(score,96);explain.append('UID identisch')
+  else:score-=45;explain.append('UID-KONFLIKT')
+ if a['email'] and a['email']==b['email']:score=max(score,88);explain.append('E-Mail identisch')
+ if a['phone'] and a['phone']==b['phone']:score+=7
+ if a['street_number'] and b['street_number'] and a['street_number']!=b['street_number']:
+  score-=17;explain.append('Hausnummer unterschiedlich')
+ return max(0,min(100,round(score))),', '.join(explain)
 
-def import_project(db, title, frame_a, map_a, frame_b, map_b, engine='rapidfuzz',
-                   mode='legacy', a_ref_column='', a_exclude_column='',
-                   exclude_values=(), empty_reference_markers=()):
-    if engine not in ('rapidfuzz','splink5'):
-        raise ValueError('Unbekannte Matching-Engine')
-    if mode not in ('legacy','dual'):
-        raise ValueError('Ungültiger Abgleichmodus')
-    if mode == 'dual' and (not a_ref_column or a_ref_column not in frame_a.columns):
-        raise ValueError('Für die zwei CRM-Workflows muss die B-Referenzspalte aus A zugeordnet werden.')
-    if a_exclude_column and a_exclude_column not in frame_a.columns:
-        raise ValueError('Die ausgewählte Ausschlussspalte existiert nicht in CRM A.')
-    validate_mapping(frame_a, map_a, 'A')
-    validate_mapping(frame_b, map_b, 'B')
-    # IDs niemals numerisch umwandeln: 000123 bleibt 000123.
-    with db:
-        cur = db.execute('INSERT INTO projects(title,created_at,a_count,b_count,engine,mode,ref_column) VALUES(?,?,?,?,?,?,?)',
-                         (title[:140].strip() or 'CRM-Abgleich', now(), len(frame_a), len(frame_b), engine,mode,a_ref_column))
-        pid = cur.lastrowid
-        markers = {plain(v).casefold() for v in empty_reference_markers if plain(v)}
-        exclusions = {plain(v).casefold() for v in exclude_values if plain(v)}
-        for side, frame, mapping in [('A', frame_a, map_a), ('B', frame_b, map_b)]:
-            batch = []
-            for vals in frame.itertuples(index=False, name=None):
-                original = {str(col): plain(val) for col, val in zip(frame.columns, vals)}
-                raw = {field: plain(original.get(mapping[field])) if mapping.get(field) else '' for field in FIELDS}
-                n = to_record(raw)
-                b_ref = plain(original.get(a_ref_column,'')) if side=='A' and mode=='dual' else ''
-                if b_ref.casefold() in markers:
-                    b_ref = ''
-                in_scope = int(not (side=='A' and a_exclude_column and
-                                    plain(original.get(a_exclude_column,'')).casefold() in exclusions))
-                batch.append((pid,side,raw['id'],json.dumps(raw,ensure_ascii=False),
-                              json.dumps(original,ensure_ascii=False), n['name'],n['street'],n['postal'],n['city'],n['email'],n['phone'],
-                              n['uid'],n['zip_name'],n['zip_street'],n['city_name'],n['name_head'],
-                              n['street_number'], n['street_name'], n['house_number'], n['address_conflict'], b_ref, in_scope))
-                if len(batch) >= 1000:
-                    db.executemany('''INSERT INTO records(project_id,side,source_id,original_json,
-                        source_json,name,street,postal,city,email,phone,uid,zip_name,zip_street,city_name,
-                        name_head,street_number,street_name,house_number,address_conflict,b_reference,in_scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
-                    batch = []
-            if batch:
-                db.executemany('''INSERT INTO records(project_id,side,source_id,original_json,
-                    source_json,name,street,postal,city,email,phone,uid,zip_name,zip_street,city_name,
-                    name_head,street_number,street_name,house_number,address_conflict,b_reference,in_scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
-    return pid
+def run_matching(db,pid,minimum=60,max_candidates=400000,progress=None):
+ progress=progress or (lambda x:None)
+ mode=db.execute('SELECT mode FROM projects WHERE project_id=?',(pid,)).fetchone()['mode']
+ with db:
+  # This does not collect all possible A x B pairs; seven indexed blocking keys.
+  db.execute('DELETE FROM pairs WHERE project_id=?',(pid,))
+  db.execute('CREATE TEMP TABLE IF NOT EXISTS candidates(a_pk INTEGER,b_pk INTEGER,PRIMARY KEY(a_pk,b_pk)) WITHOUT ROWID')
+  db.execute('DELETE FROM candidates')
+  for field,fanout in (('uid',2500),('email',1500),('phone',500),('zip_name',450),('zip_street',250),('city_name',200),('name_head',100)):
+   sides={}
+   for side in ('A','B'):
+    wh=" AND b_reference='' AND in_scope=1" if side=='A' and mode=='dual' else ''
+    m={}
+    for rec in db.execute(f"SELECT pk,{field} FROM records WHERE project_id=? AND side=? AND {field}!=''"+wh,(pid,side)):
+     m.setdefault(rec[field],[]).append(rec['pk'])
+    sides[side]=m
+   buf=[]
+   for key,aa in sides['A'].items():
+    bb=sides['B'].get(key,[])
+    if not bb or len(aa)*len(bb)>fanout:continue
+    buf.extend((a,b) for a in aa for b in bb)
+    if len(buf)>3000:
+     db.executemany('INSERT OR IGNORE INTO candidates VALUES(?,?)',buf);buf=[]
+   if buf:db.executemany('INSERT OR IGNORE INTO candidates VALUES(?,?)',buf)
+   qty=db.execute('SELECT COUNT(*) FROM candidates').fetchone()[0]
+   if qty>max_candidates:raise ValueError('Zu viele Kandidaten. Blocking eingrenzen.')
+   progress(f'Blocking {field}: {qty:,} Kandidaten')
+  qty=db.execute('SELECT count(*) FROM candidates').fetchone()[0]
+  cursor=db.execute('''SELECT a.*,b.pk AS target_pk,b.name b_name,b.street b_street,b.postal b_postal,
+       b.city b_city,b.email b_email,b.phone b_phone,b.uid b_uid,b.street_number b_street_number
+       FROM candidates c JOIN records a ON a.pk=c.a_pk JOIN records b ON b.pk=c.b_pk''')
+  buf=[];kept=0
+  for r in cursor:
+   a=dict(r);b={k:r['b_'+k] for k in ('name','street','postal','city','email','phone','uid','street_number')}
+   score,reason=score_pair(a,b)
+   if score>=minimum:buf.append((pid,r['pk'],r['target_pk'],score,reason,now()))
+   if len(buf)>=1000:
+    db.executemany('INSERT INTO pairs(project_id,a_pk,b_pk,score,reason,updated_at) VALUES(?,?,?,?,?,?)',buf);kept+=len(buf);buf=[]
+  if buf:db.executemany('INSERT INTO pairs(project_id,a_pk,b_pk,score,reason,updated_at) VALUES(?,?,?,?,?,?)',buf);kept+=len(buf)
+  db.execute('UPDATE projects SET candidate_count=? WHERE project_id=?',(kept,pid))
+  db.execute('DROP TABLE candidates')
+ return qty,kept
 
-
-def score_pair(a, b):
-    """Heuristic review score, NOT calibrated match probability."""
-    vals = []
-    reasons = []
-    if a['name'] and b['name']:
-        s = fuzz.WRatio(a['name'], b['name']) / 100
-        vals.append((0.48, s))
-        if s >= .90: reasons.append('Name sehr aehnlich')
-        elif s < .50: reasons.append('Name deutlich unterschiedlich')
-    if a['street'] and b['street']:
-        s = fuzz.WRatio(a['street'], b['street']) / 100
-        vals.append((0.26, s))
-        if s >= .90: reasons.append('Strasse aehnlich')
-    if a['postal'] and b['postal']:
-        same = a['postal'] == b['postal']
-        vals.append((0.16, float(same)))
-        if same: reasons.append('PLZ identisch')
-        else: reasons.append('PLZ verschieden')
-    if a['city'] and b['city']:
-        vals.append((0.10, fuzz.WRatio(a['city'], b['city']) / 100))
-    if not vals:
-        return 0, 'Keine vergleichbaren Adress- oder Namensfelder'
-    score = (sum(w * s for w,s in vals) / sum(w for w,_ in vals)) * 100
-    if a['uid'] and b['uid']:
-        if a['uid'] == b['uid']:
-            score = max(score, 96)
-            reasons.append('UID identisch')
-        else:
-            score -= 45
-            if score < 65 and vals and sum(w*s for w,s in vals)/sum(w for w,_ in vals) >= .85:
-                score = 65  # Konflikt mit ansonsten fast identischen Stammdaten zur Pruefung anzeigen.
-            reasons.append('WARNUNG: UID verschieden')
-    if a['email'] and b['email'] and a['email'] == b['email']:
-        score = max(score, 78)
-        score += 10
-        reasons.append('E-Mail identisch')
-    if a['phone'] and b['phone'] and a['phone'] == b['phone']:
-        score += 7
-        reasons.append('Telefon identisch')
-    if a['street_number'] and b['street_number'] and a['street_number'] != b['street_number']:
-        score -= 17
-        reasons.append('Hausnummer verschieden')
-    return max(0, min(100, int(round(score)))), ', '.join(reasons) or 'Aehnliche Datensaetze'
-
-
-BLOCKS = [
-    ('uid', 2500), ('email', 1500), ('phone', 500),
-    ('zip_name', 450), ('zip_street', 250), ('city_name', 200), ('name_head', 100)
-]
-
-
-def run_matching(db, pid, minimum=60, max_candidates=400_000, progress=None):
-    """Indexed, capped blocking; no 35k x 35k Cartesian product."""
-    progress = progress or (lambda msg: None)
-    with db:
-        db.execute('DELETE FROM pairs WHERE project_id=?', (pid,))
-        db.execute('''CREATE TEMP TABLE IF NOT EXISTS work_candidates (
-            a_pk INTEGER NOT NULL, b_pk INTEGER NOT NULL, PRIMARY KEY(a_pk,b_pk)) WITHOUT ROWID''')
-        db.execute('DELETE FROM work_candidates')
-        for field, fanout in BLOCKS:
-            progress(f'Kandidaten ermitteln: {field}')
-            # In Python nach Block-Key gruppieren: verhindert problematische
-            # SQLite-Joinplaene und vermeidet den vollen Kreuzvergleich.
-            side_maps = {}
-            for side in ('A','B'):
-                mapping = {}
-                dual = db.execute('SELECT mode FROM projects WHERE project_id=?', (pid,)).fetchone()['mode'] == 'dual'
-                restriction = " AND b_reference='' AND in_scope=1" if side=='A' and dual else ''
-                for row in db.execute(f"SELECT pk,{field} FROM records WHERE project_id=? AND side=? AND {field} != ''"+restriction, (pid,side)):
-                    mapping.setdefault(row[field], []).append(row['pk'])
-                side_maps[side] = mapping
-            a_map,b_map = side_maps['A'],side_maps['B']
-            buffer=[]
-            for key, a_ids in a_map.items():
-                b_ids=b_map.get(key)
-                if not b_ids or len(a_ids)*len(b_ids)>fanout:
-                    continue
-                for a_id in a_ids:
-                    for b_id in b_ids:
-                        buffer.append((a_id,b_id))
-                        if len(buffer)>=4000:
-                            db.executemany('INSERT OR IGNORE INTO work_candidates(a_pk,b_pk) VALUES(?,?)',buffer)
-                            buffer.clear()
-            if buffer:
-                db.executemany('INSERT OR IGNORE INTO work_candidates(a_pk,b_pk) VALUES(?,?)',buffer)
-            qty = db.execute('SELECT COUNT(*) FROM work_candidates').fetchone()[0]
-            if qty > max_candidates:
-                raise ValueError(f'{qty:,} Kandidaten: Limit {max_candidates:,} ueberschritten. Engere Blocking-Regeln erforderlich.')
-        qty = db.execute('SELECT COUNT(*) FROM work_candidates').fetchone()[0]
-        progress(f'{qty:,} Kandidaten bewerten')
-        cursor = db.execute('''SELECT w.a_pk,w.b_pk,
-            a.name a_name,a.street a_street,a.postal a_postal,a.city a_city,
-            a.email a_email,a.phone a_phone,a.uid a_uid,a.street_number a_street_number,
-            b.name b_name,b.street b_street,b.postal b_postal,b.city b_city,
-            b.email b_email,b.phone b_phone,b.uid b_uid,b.street_number b_street_number
-            FROM work_candidates w
-            JOIN records a ON a.pk=w.a_pk
-            JOIN records b ON b.pk=w.b_pk''')
-        buffer = []
-        kept = 0
-        while True:
-            fetched = cursor.fetchmany(2500)
-            if not fetched: break
-            for row in fetched:
-                a = {k:row['a_'+k] for k in ('name','street','postal','city','email','phone','uid','street_number')}
-                b = {k:row['b_'+k] for k in a}
-                score, reason = score_pair(a,b)
-                if score >= minimum:
-                    buffer.append((pid,row['a_pk'],row['b_pk'],score,reason,now()))
-            if buffer:
-                db.executemany('''INSERT INTO pairs(project_id,a_pk,b_pk,score,reason,updated_at)
-                                  VALUES(?,?,?,?,?,?)''',buffer)
-                kept += len(buffer)
-                buffer = []
-        db.execute('UPDATE projects SET candidate_count=? WHERE project_id=?', (kept,pid))
-        db.execute('DROP TABLE work_candidates')
-    return qty, kept
-
-
-def list_projects(db):
-    return db.execute('SELECT * FROM projects ORDER BY project_id DESC').fetchall()
-
-
-def project_stats(db, pid):
-    return dict(db.execute('''SELECT p.*,
-            (SELECT count(*) FROM pairs WHERE project_id=p.project_id AND state='bestaetigt') accepted,
-            (SELECT count(*) FROM pairs WHERE project_id=p.project_id AND state='offen') pending,
-            (SELECT count(*) FROM pairs WHERE project_id=p.project_id AND state='abgelehnt') rejected
-            FROM projects p WHERE project_id=?''',(pid,)).fetchone())
-
-
-def page_pairs(db, pid, state='Alle', offset=0, limit=40, min_score=0):
-    clause = " AND p.state=?" if state != 'Alle' else ''
-    params = [pid,min_score]+([state] if state != 'Alle' else [])
-    sql = f'''FROM pairs p JOIN records a ON a.pk=p.a_pk JOIN records b ON b.pk=p.b_pk
-              WHERE p.project_id=? AND p.score >= ? {clause}'''
-    count = db.execute('SELECT COUNT(*) '+sql,params).fetchone()[0]
-    items = db.execute('''SELECT p.*,a.source_id a_id,b.source_id b_id,
-                        a.original_json a_json,b.original_json b_json '''+sql+
-                       ' ORDER BY p.score DESC,p.a_pk,p.b_pk LIMIT ? OFFSET ?',params+[limit,offset]).fetchall()
-    return count,items
-
-
+def list_projects(db):return db.execute('SELECT * FROM projects ORDER BY project_id DESC').fetchall()
+def project_stats(db,pid):
+ r=db.execute("""SELECT p.*,(SELECT count(*) FROM pairs WHERE project_id=p.project_id AND state='bestaetigt') accepted,
+ (SELECT count(*) FROM pairs WHERE project_id=p.project_id AND state='offen') pending,
+ (SELECT count(*) FROM pairs WHERE project_id=p.project_id AND state='abgelehnt') rejected FROM projects p WHERE project_id=?""",(pid,)).fetchone()
+ return dict(r) if r else {}
 def set_review(db,pid,a_pk,b_pk,state):
-    if state not in ('bestaetigt','abgelehnt','offen','unklar'):
-        raise ValueError('Ungueltiger Pruefstatus')
-    with db:
-        if state=='bestaetigt':
-            from migration import is_dual, reference_conflict
-            if is_dual(db,pid) and reference_conflict(db,pid,a_pk,b_pk):
-                raise ValueError('Konflikt: Diese B-ID ist bereits als Referenz bei einer anderen A-Adresse hinterlegt.')
-            clash = db.execute('''SELECT a_pk,b_pk FROM pairs WHERE project_id=? AND state='bestaetigt'
-                  AND (a_pk=? OR b_pk=?) AND NOT (a_pk=? AND b_pk=?) LIMIT 1''',
-                  (pid,a_pk,b_pk,a_pk,b_pk)).fetchone()
-            if clash:
-                raise ValueError('Konflikt: Mindestens eine CRM-ID ist bereits in einem anderen Treffer bestaetigt. Zuerst die andere Freigabe aufheben.')
-        db.execute('''UPDATE pairs SET state=?,updated_at=?
-                      WHERE project_id=? AND a_pk=? AND b_pk=?''',
-                   (state,now(),pid,a_pk,b_pk))
-
-
+ if state not in ('offen','bestaetigt','abgelehnt','unklar'):raise ValueError('Ungültiger Prüfstatus.')
+ with db:
+  if state=='bestaetigt':
+   from migration import is_dual,reference_conflict
+   if is_dual(db,pid) and reference_conflict(db,pid,a_pk,b_pk):raise ValueError('B-ID ist bereits bei anderer A-Adresse referenziert.')
+   conflict=db.execute("SELECT 1 FROM pairs WHERE project_id=? AND state='bestaetigt' AND (a_pk=? OR b_pk=?) AND NOT(a_pk=? AND b_pk=?)",(pid,a_pk,b_pk,a_pk,b_pk)).fetchone()
+   if conflict:raise ValueError('Konflikt: CRM-ID bereits einem anderen Datensatz zugeordnet.')
+  db.execute('UPDATE pairs SET state=?,updated_at=? WHERE project_id=? AND a_pk=? AND b_pk=?',(state,now(),pid,a_pk,b_pk))
 def save_llm(db,pid,a_pk,b_pk,decision,reason,model):
-    if decision not in ('gleich','verschieden','unklar'):
-        decision='unklar'
-    with db:
-        db.execute('''UPDATE pairs SET llm_decision=?,llm_reason=?,llm_model=?,updated_at=?
-                      WHERE project_id=? AND a_pk=? AND b_pk=?''',
-                   (decision,reason[:1800],model[:100],now(),pid,a_pk,b_pk))
-
-
+ with db:db.execute('UPDATE pairs SET llm_decision=?,llm_reason=?,llm_model=?,updated_at=? WHERE project_id=? AND a_pk=? AND b_pk=?',(decision,plain(reason)[:1800],model,now(),pid,a_pk,b_pk))
+def page_pairs(db,pid,state='Alle',offset=0,limit=40,min_score=0):
+ wh=" AND p.state=?" if state!='Alle' else '';params=[pid,min_score]+([state] if wh else [])
+ fr='FROM pairs p JOIN records a ON a.pk=p.a_pk JOIN records b ON b.pk=p.b_pk WHERE p.project_id=? AND p.score>=? '+wh
+ total=db.execute('SELECT count(*) '+fr,params).fetchone()[0]
+ rows=db.execute('SELECT p.*,a.source_id a_id,b.source_id b_id,a.original_json a_json,b.original_json b_json '+fr+' ORDER BY p.score DESC,p.a_pk,p.b_pk LIMIT ? OFFSET ?',params+[limit,offset]).fetchall()
+ return total,rows
+def _safe(value):
+ s=plain(value)
+ return "'"+s if s.lstrip()[:1] in ('=','+','-','@') else s
 def export_pairs(db,pid,accepted_only=False):
-    sql = '''SELECT a.source_id crm_a_id, b.source_id crm_b_id,
-             p.score vergleichswert_0_100, p.match_probability splink_match_probability,
-             pr.engine matching_engine, p.state pruefentscheid,
-             p.reason gruende, p.llm_decision ki_vorschlag,
-             p.llm_reason ki_begruendung, p.llm_model ki_modell,
-             p.updated_at bearbeitet_am
-             FROM pairs p JOIN records a ON a.pk=p.a_pk JOIN records b ON b.pk=p.b_pk
-             JOIN projects pr ON pr.project_id=p.project_id
-             WHERE p.project_id=?'''
-    if accepted_only:
-        sql += " AND p.state='bestaetigt'"
-    sql += ' ORDER BY p.score DESC'
-    return pd.read_sql_query(sql,db,params=(pid,)).to_csv(index=False,sep=';').encode('utf-8-sig')
-
-
+ sql='''SELECT a.source_id CRM_A_ID,b.source_id CRM_B_ID,p.score score_0_100,
+ p.match_probability Splink_Wahrscheinlichkeit,p.state Pruefentscheid,p.reason Gruende,p.llm_decision KI_Vorschlag
+ FROM pairs p JOIN records a ON a.pk=p.a_pk JOIN records b ON b.pk=p.b_pk WHERE p.project_id=?'''
+ if accepted_only:sql+=" AND p.state='bestaetigt'"
+ d=pd.read_sql_query(sql,db,params=(pid,));return d.map(_safe).to_csv(index=False,sep=';').encode('utf-8-sig')
 def export_unmatched(db,pid,side):
-    if side not in ('A','B'):
-        raise ValueError('ungueltige Quelle')
-    col = 'a_pk' if side=='A' else 'b_pk'
-    sql = f'''SELECT r.source_id crm_id,r.source_json originaldaten
-              FROM records r WHERE r.project_id=? AND r.side=?
-              AND NOT EXISTS(SELECT 1 FROM pairs p WHERE p.project_id=r.project_id
-                             AND p.state='bestaetigt' AND p.{col}=r.pk)
-              ORDER BY r.source_id'''
-    rows = db.execute(sql, (pid,side)).fetchall()
-    data = [{'crm_id':r['crm_id'],**json.loads(r['originaldaten'])} for r in rows]
-    return pd.DataFrame(data).to_csv(index=False,sep=';').encode('utf-8-sig')
-
-
+ if side not in ('A','B'):raise ValueError('Ungültige Quelle.')
+ key='a_pk' if side=='A' else 'b_pk'
+ rows=db.execute(f'''SELECT source_id,source_json FROM records r WHERE project_id=? AND side=?
+ AND NOT EXISTS(SELECT 1 FROM pairs p WHERE p.project_id=? AND p.state='bestaetigt' AND p.{key}=r.pk)''',(pid,side,pid)).fetchall()
+ out=[{'ID':r['source_id'],**json.loads(r['source_json'])} for r in rows]
+ return pd.DataFrame(out).map(_safe).to_csv(index=False,sep=';').encode('utf-8-sig')
 def delete_project(db,pid):
-    # Trained model JSON belongs to the deleted project and can contain
-    # parameter estimates from its records. Never leave it on the host.
-    folder=(Path(db.execute('PRAGMA database_list').fetchone()['file']).resolve().parent/'models').resolve()
-    model_files=[Path(r['model_path']).resolve() for r in db.execute(
-        'SELECT model_path FROM trained_models WHERE project_id=?',(pid,))]
-    with db:
-        db.execute('DELETE FROM projects WHERE project_id=?',(pid,))
-    for path in model_files:
-        if path.is_relative_to(folder) and path.is_file():
-            path.unlink()
-
-
-
-def comparison_diagnostics(a, b):
-    """Evidence per normalised field; independent of Splink's learned weights."""
-    fields = [('name', 'Name'), ('street_name', 'Strassenname'),
-              ('house_number', 'Hausnummer'), ('postal', 'PLZ'), ('city', 'Ort'),
-              ('uid', 'UID'), ('email', 'E-Mail'), ('phone', 'Telefon')]
-    details = []
-    for key, label in fields:
-        left = a[key] or ''
-        right = b[key] or ''
-        if not left or not right:
-            status, score = 'Nicht vergleichbar', None
-        elif left == right:
-            status, score = 'Identisch', 100
-        elif key in ('house_number', 'postal', 'uid', 'email', 'phone'):
-            status, score = 'Abweichend', 0
-        else:
-            score = int(round(fuzz.WRatio(left, right)))
-            status = 'Ähnlich' if score >= 80 else 'Abweichend'
-        details.append({'Feld': label, 'CRM A': left, 'CRM B': right,
-                        'Befund': status, 'Ähnlichkeit': score})
-    return details
+ with db:db.execute('DELETE FROM projects WHERE project_id=?',(pid,))
+def comparison_diagnostics(a,b):
+ return [{'Feld':k,'A':a[k],'B':b[k],'gleich':a[k]==b[k]} for k in ('name','street_name','house_number','postal','city','uid','email','phone')]

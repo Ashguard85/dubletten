@@ -1,400 +1,172 @@
-"""Offline validation against a user-installed swisstopo building-address snapshot.
+"""Streaming, offline importer of the Swiss official building-address directory.
 
-No network calls. Only public reference CSV/ZIP is imported. No person lookup.
-Official CSV: STN_LABEL, ADR_NUMBER, ZIP_LABEL, ADR_STATUS, ADR_OFFICIAL.
-Legacy separate ZIP_ZIP4 + ZIP_NAME columns are also supported.
+Accepts official ZIP_LABEL (e.g. '6048 Horw') or legacy ZIP_ZIP4/ZIP_NAME.
+No outgoing address lookups; reference is immutable per imported snapshot.
 """
 from __future__ import annotations
-
-import csv
-import hashlib
-import io
-import json
-import re
-import sqlite3
-import zipfile
-from datetime import date
+import csv,hashlib,io,json,re,sqlite3,zipfile
+from datetime import datetime
 from pathlib import Path
+from rapidfuzz import fuzz
+from engine import plain,norm,norm_street,norm_house_number,now
 
-from engine import norm, norm_street, norm_house_number, now, plain
-
-CSV_COLUMNS = {
-    'street': ('STN_LABEL','STN_TEXT','STR_LABEL','STREET','STRASSE'),
-    'number': ('ADR_NUMBER','HOUSE_NUMBER','HAUSNUMMER'),
-    'postcode': ('ZIP_ZIP4','PLZ','POSTCODE','ZIP'),
-    'city': ('ZIP_NAME','ZIP_PLACE','ORT','CITY'),
-    'status': ('ADR_STATUS',),
-    'official': ('ADR_OFFICIAL',),
-    'egaid': ('ADR_EGAID',),
+RESULT_LABELS={
+ 'amtlich_aktuell':'Aktuelle amtliche Gebäudeadresse',
+ 'strasse_aehnlich':'Ähnlicher Strassenname',
+ 'hausnummer_unbekannt':'Strasse vorhanden, Hausnummer nicht gefunden',
+ 'plz_abweichend':'PLZ abweichend',
+ 'ort_abweichend':'Ort abweichend',
+ 'geplant':'Adresse projektiert',
+ 'aufgehoben':'Adresse aufgehoben',
+ 'nicht_amtlich':'Kein amtlich bestätigter Eintrag',
+ 'status_unklar':'Amtlicher Status unklar',
+ 'nicht_gefunden':'Keine passende Gebäudeadresse gefunden',
+ 'unvollstaendig':'Adresse unvollständig',
+ 'ausland':'Adresse ausserhalb der Schweiz',
+ 'eingabe_konflikt':'Widerspruch in der Eingabe',
 }
-RESULT_LABELS = {
-    'amtlich_aktuell': 'Amtlich, in Betrieb',
-    'nicht_amtlich': 'Im Verzeichnis, nicht als amtlich markiert',
-    'status_unklar': 'Im Register, Amtlichkeits- oder Betriebsstatus unklar',
-    'geplant': 'Adresse projektiert',
-    'aufgehoben': 'Adresse aufgehoben',
-    'ort_abweichend': 'PLZ/Strasse/Hausnummer gefunden, Ortschaft abweichend',
-    'hausnummer_unbekannt': 'Strasse vorhanden, Hausnummer nicht gefunden',
-    'plz_abweichend': 'Adresse bei anderer PLZ gefunden',
-    'nicht_gefunden': 'Kein Treffer im lokalen Register',
-    'unvollstaendig': 'Adresse zu unvollständig für Prüfung',
-    'ausland': 'Nicht-Schweizer Adresse',
-}
-
 
 def ensure_schema(db):
-    db.executescript('''
-    CREATE TABLE IF NOT EXISTS swisstopo_snapshots (
-      snapshot_id INTEGER PRIMARY KEY, import_at TEXT NOT NULL, source_name TEXT NOT NULL,
-      reference_date TEXT NOT NULL, source_sha256 TEXT NOT NULL,
-      address_count INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE TABLE IF NOT EXISTS swisstopo_addresses (
-      snapshot_id INTEGER NOT NULL REFERENCES swisstopo_snapshots(snapshot_id) ON DELETE CASCADE,
-      postal TEXT NOT NULL, street TEXT NOT NULL, house TEXT NOT NULL,
-      city TEXT NOT NULL, egaid TEXT NOT NULL,
-      street_label TEXT NOT NULL DEFAULT '', city_label TEXT NOT NULL DEFAULT '', number_label TEXT NOT NULL DEFAULT '',
-      adr_status TEXT NOT NULL, official TEXT NOT NULL,
-      PRIMARY KEY (snapshot_id, postal, street, house, city, egaid)
-    ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS idx_ch_addr_exact
-       ON swisstopo_addresses(snapshot_id,postal,street,house);
-    CREATE INDEX IF NOT EXISTS idx_ch_addr_city
-       ON swisstopo_addresses(snapshot_id,city,street,house);
-    CREATE TABLE IF NOT EXISTS swisstopo_results(
-      project_id INTEGER NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-      record_pk INTEGER NOT NULL REFERENCES records(pk) ON DELETE CASCADE,
-      snapshot_id INTEGER NOT NULL REFERENCES swisstopo_snapshots(snapshot_id),
-      result TEXT NOT NULL, suggestion TEXT NOT NULL, matched_egaid TEXT NOT NULL,
-      processed_at TEXT NOT NULL, PRIMARY KEY (project_id,record_pk)
-    );
-    CREATE INDEX IF NOT EXISTS idx_ch_results ON swisstopo_results(project_id,result);
-    ''')
-    existing={r['name'] for r in db.execute('PRAGMA table_info(swisstopo_addresses)')}
-    for column in ('street_label', 'city_label', 'number_label'):
-        if column not in existing:
-            db.execute(f"ALTER TABLE swisstopo_addresses ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-    db.commit()
-
-
-def active_snapshot(db):
-    row = db.execute('SELECT * FROM swisstopo_snapshots WHERE active=1 ORDER BY snapshot_id DESC LIMIT 1').fetchone()
-    return dict(row) if row else None
-
-
-def list_snapshots(db):
-    return [dict(row) for row in db.execute('SELECT * FROM swisstopo_snapshots ORDER BY snapshot_id DESC')]
-
-
-def _extract(row, name, default=''):
-    for candidate in CSV_COLUMNS[name]:
-        if candidate in row:
-            return plain(row[candidate])
-    return default
-
-
-def _get_postcode(value):
-    txt=plain(value)
-    m=re.search(r'\b([0-9]{4})\b', txt)
-    return m.group(1) if m else ''
-
-
-class UnsupportedSwisstopoCSV(ValueError):
-    """The CSV exists, but is not a building-address directory."""
-
-
-def _valid_columns(cols):
-    cols = set(cols)
-    has_street = any(c in cols for c in CSV_COLUMNS['street'])
-    has_number = any(c in cols for c in CSV_COLUMNS['number'])
-    has_location = 'ZIP_LABEL' in cols or (
-        any(c in cols for c in CSV_COLUMNS['postcode'])
-        and any(c in cols for c in CSV_COLUMNS['city']))
-    return has_street and has_number and has_location
-
-
-def _postcode_cities(row):
-    """Yield all 4-digit postcode/locality combinations from the official ZIP_LABEL.
-
-    A ZIP_LABEL can contain '6003 Luzern, 6004 Luzern'. COM_NAME is the
-    *political municipality* and must not be used as the postal locality.
-    """
-    labelled = plain(row.get('ZIP_LABEL', ''))
-    if labelled:
-        pairs = []
-        for entry in labelled.split(',')[:32]:
-            entry = entry.strip()
-            match = re.fullmatch(r'(\d{4})\s+(.+)', entry)
-            if match:
-                postal, city = match.groups()
-                city = norm(city)
-                if city and (postal, city) not in pairs:
-                    pairs.append((postal, city))
-        if pairs:
-            return pairs
-    # Backwards-compatible support for a denormalized/hand-made CSV.
-    postal = _get_postcode(_extract(row, 'postcode'))
-    city = _extract(row, 'city')
-    if city and re.match(r'^\d{4}\s+', city):
-        city = re.sub(r'^\d{4}\s+', '', city)
-    return [(postal, norm(city))] if postal and city else []
-
-
-def _iter_csv(f, filename):
-    # Streaming read: 400-MB CSVs are not loaded into RAM at once.
-    with io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace', newline='') as stream:
-        head = stream.readline()
-        if not head:
-            return
-        delimiter = ';' if head.count(';') > head.count(',') else ','
-        import itertools
-        reader = csv.DictReader(itertools.chain([head], stream), delimiter=delimiter)
-        if not reader.fieldnames:
-            raise UnsupportedSwisstopoCSV(f'{filename}: CSV-Kopfzeile nicht erkannt.')
-        reader.fieldnames = [plain(x).upper() for x in reader.fieldnames]
-        if not _valid_columns(reader.fieldnames):
-            raise UnsupportedSwisstopoCSV(
-                f'{filename}: kein Gebäudeadress-CSV. Erwartet STN_LABEL, ADR_NUMBER '
-                'und ZIP_LABEL (alternativ ZIP_ZIP4 + ZIP_NAME).')
-        for raw in reader:
-            if raw:
-                yield raw
-
-
-def _members(path):
-    if zipfile.is_zipfile(path):
-        with zipfile.ZipFile(path) as archive:
-            members = [x for x in archive.infolist()
-                       if not x.is_dir() and x.filename.lower().endswith('.csv')
-                       and not x.filename.startswith('__MACOSX/')]
-            if not members:
-                raise ValueError('ZIP enthält keine CSV-Datei.')
-            if sum(x.file_size for x in members) > 3 * 1024**3:
-                raise ValueError('ZIP enthält insgesamt zu viel unkomprimierte CSV-Daten (>3 GB).')
-            recognized = 0
-            for member in members:
-                if member.file_size > 3 * 1024**3:
-                    raise ValueError('Ein CSV-Eintrag im ZIP ist zu gross.')
-                with archive.open(member) as data:
-                    try:
-                        # Skip unrelated CSV attachments; never extract ZIP to disk.
-                        for row in _iter_csv(data, member.filename):
-                            recognized += 1
-                            yield row
-                    except UnsupportedSwisstopoCSV:
-                        continue
-            if recognized == 0:
-                raise ValueError('ZIP enthält keine verwertbare swisstopo-Gebäudeadress-CSV mit STN_LABEL, ADR_NUMBER und ZIP_LABEL.')
-    elif path.suffix.lower() == '.csv':
-        with path.open('rb') as data:
-            yield from _iter_csv(data, path.name)
-    else:
-        raise ValueError('Datei ist keine gültige ZIP-Datei oder lokale CSV.')
-
-
+ db.executescript('''
+ CREATE TABLE IF NOT EXISTS swisstopo_snapshots(
+   snapshot_id INTEGER PRIMARY KEY, reference_date TEXT NOT NULL,source_sha256 TEXT NOT NULL,
+   imported_at TEXT NOT NULL,address_count INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 0);
+ CREATE TABLE IF NOT EXISTS swisstopo_addresses(
+   id INTEGER PRIMARY KEY,snapshot_id INTEGER NOT NULL REFERENCES swisstopo_snapshots(snapshot_id) ON DELETE CASCADE,
+   postal TEXT NOT NULL,street TEXT NOT NULL,house TEXT NOT NULL,city TEXT NOT NULL,egaid TEXT NOT NULL,
+   street_label TEXT NOT NULL DEFAULT '',city_label TEXT NOT NULL DEFAULT '',number_label TEXT NOT NULL DEFAULT '',
+   adr_status TEXT NOT NULL DEFAULT 'real',official TEXT NOT NULL DEFAULT '1');
+ CREATE INDEX IF NOT EXISTS ix_swisstopo_address ON swisstopo_addresses(snapshot_id,postal,street,house,city);
+ CREATE INDEX IF NOT EXISTS ix_swisstopo_city ON swisstopo_addresses(snapshot_id,city,street,house);
+ CREATE INDEX IF NOT EXISTS ix_swisstopo_street ON swisstopo_addresses(snapshot_id,postal,street);
+ CREATE TABLE IF NOT EXISTS swisstopo_validation(
+   project_id INTEGER NOT NULL,pk INTEGER NOT NULL,result TEXT NOT NULL,hint TEXT NOT NULL,
+   egaid TEXT NOT NULL,snapshot_id INTEGER NOT NULL,PRIMARY KEY(project_id,pk));
+ ''')
+ fields={r['name'] for r in db.execute('PRAGMA table_info(swisstopo_addresses)')}
+ for k in ('street_label','city_label','number_label'):
+  if k not in fields:db.execute(f"ALTER TABLE swisstopo_addresses ADD COLUMN {k} TEXT NOT NULL DEFAULT ''")
+ db.commit()
+def active_snapshot(db):return db.execute('SELECT * FROM swisstopo_snapshots WHERE active=1 ORDER BY snapshot_id DESC LIMIT 1').fetchone()
+def list_snapshots(db):return [dict(r) for r in db.execute('SELECT * FROM swisstopo_snapshots ORDER BY snapshot_id DESC')]
+def _open_rows(path):
+ path=Path(path)
+ if path.suffix.lower()=='.zip':
+  with zipfile.ZipFile(path) as z:
+   members=[m for m in z.infolist() if m.filename.lower().endswith('.csv') and not m.is_dir()]
+   members.sort(key=lambda m:m.file_size,reverse=True)
+   if not members:raise ValueError('Die ZIP enthält keine CSV.')
+   for entry in members:
+    with z.open(entry) as binary:
+     with io.TextIOWrapper(binary,encoding='utf-8-sig',errors='replace',newline='') as txt:
+      peek=txt.readline()
+      delimiter=';' if peek.count(';')>=peek.count(',') else ','
+      from itertools import chain
+      reader=csv.DictReader(chain([peek],txt),delimiter=delimiter)
+      headers={plain(x) for x in (reader.fieldnames or [])}
+      if {'STN_LABEL','ADR_NUMBER'}.issubset(headers) and ('ZIP_LABEL' in headers or 'ZIP_ZIP4' in headers):
+       yield entry.filename,reader
+ elif path.suffix.lower()=='.csv':
+  with path.open('r',encoding='utf-8-sig',errors='replace',newline='') as txt:
+   peek=txt.readline();delimiter=';' if peek.count(';')>=peek.count(',') else ','
+   from itertools import chain
+   reader=csv.DictReader(chain([peek],txt),delimiter=delimiter)
+   yield path.name,reader
+ else:raise ValueError('Nur CSV oder ZIP erlaubt.')
 def inspect_source(path):
-    """Fast schema/header check without reading the complete (possibly huge) dataset."""
-    path = Path(path)
-    sources = []
-    def check(f, name, size):
-        with io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace', newline='') as stream:
-            head = stream.readline()
-        delimiter = ';' if head.count(';') > head.count(',') else ','
-        cols = [plain(c).upper() for c in next(csv.reader([head], delimiter=delimiter), [])]
-        if _valid_columns(cols):
-            sources.append({'file':name, 'size':size, 'columns':cols,
-                            'format':'ZIP_LABEL' if 'ZIP_LABEL' in cols else 'ZIP_ZIP4 + ZIP_NAME'})
-    if zipfile.is_zipfile(path):
-        with zipfile.ZipFile(path) as z:
-            for member in z.infolist():
-                if member.is_dir() or not member.filename.lower().endswith('.csv'):
-                    continue
-                with z.open(member) as file:
-                    check(file, member.filename, member.file_size)
-    elif path.suffix.lower()=='.csv':
-        with path.open('rb') as file:
-            check(file, path.name, path.stat().st_size)
-    if not sources:
-        raise ValueError('Keine Gebäudeadress-CSV gefunden. Benötigt STN_LABEL, ADR_NUMBER und ZIP_LABEL (oder ZIP_ZIP4/ZIP_NAME).')
-    return sources
+ if not Path(path).is_file():raise ValueError('Referenzdatei nicht vorhanden.')
+ found=[]
+ for name,rows in _open_rows(path):
+  cols={plain(x) for x in (rows.fieldnames or [])}
+  if {'STN_LABEL','ADR_NUMBER'}.issubset(cols) and ('ZIP_LABEL' in cols or {'ZIP_ZIP4','ZIP_NAME'}.issubset(cols)):
+   found.append({'member':name,'format':'ZIP_LABEL' if 'ZIP_LABEL' in cols else 'ZIP_ZIP4 / ZIP_NAME'})
+ if not found:raise ValueError('Keine gültigen swisstopo-Adressspalten. Benötigt STN_LABEL, ADR_NUMBER und ZIP_LABEL (oder ZIP_ZIP4 und ZIP_NAME).')
+ return found
+def _status(value):
+ s=plain(value).lower()
+ return {'1':'real','0':'geplant','2':'aufgehoben','real':'real','planned':'geplant','retired':'aufgehoben'}.get(s,'status_unklar')
+def _postal_places(row):
+ label=plain(row.get('ZIP_LABEL'))
+ if label:
+  matches=[]
+  for item in label.split(',')[:32]:
+   m=re.match(r'^\s*(\d{4})\s+(.+?)\s*$',item)
+   if m:matches.append((m[1],m[2]))
+  if matches:return matches
+ post=plain(row.get('ZIP_ZIP4') or row.get('ZIP'))
+ city=plain(row.get('ZIP_NAME') or row.get('COM_NAME'))
+ return [(post,city)] if post and city else []
+def import_snapshot(db,path,reference_date,progress=None):
+ inspect_source(path)
+ progress=progress or (lambda msg:None)
+ if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',plain(reference_date)):
+  raise ValueError('swisstopo-Bezugsdatum als YYYY-MM-DD angeben.')
+ datetime.strptime(reference_date,'%Y-%m-%d')
+ sha=hashlib.sha256()
+ with open(path,'rb') as binary:
+  for chunk in iter(lambda:binary.read(2**20),b''):sha.update(chunk)
+ with db:
+  sid=db.execute('INSERT INTO swisstopo_snapshots(reference_date,source_sha256,imported_at) VALUES(?,?,?)',
+                 (reference_date,sha.hexdigest(),now())).lastrowid
+  batch=[];count=0
+  for member,rows in _open_rows(path):
+   for row in rows:
+    street_raw=plain(row.get('STN_LABEL'));number_raw=plain(row.get('ADR_NUMBER'))
+    nstreet=norm_street(street_raw);nnumber=norm_house_number(number_raw)
+    if not nstreet or not nnumber:continue
+    for post,city in _postal_places(row):
+     if not re.fullmatch(r'\d{4}',post) or not norm(city):continue
+     batch.append((sid,post,nstreet,nnumber,norm(city),plain(row.get('ADR_EGAID')),street_raw,city,number_raw,
+                   _status(row.get('ADR_STATUS') or '1'), '0' if plain(row.get('ADR_OFFICIAL') or '1').lower() in ('0','false','no') else '1'))
+    if len(batch)>=5000:
+     db.executemany('''INSERT INTO swisstopo_addresses(snapshot_id,postal,street,house,city,egaid,street_label,city_label,number_label,adr_status,official)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)''',batch);count+=len(batch);batch=[]
+     if count%50000==0:progress(f'{count:,} Referenzadressen importiert')
+  if batch:
+   db.executemany('''INSERT INTO swisstopo_addresses(snapshot_id,postal,street,house,city,egaid,street_label,city_label,number_label,adr_status,official)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)''',batch);count+=len(batch)
+  if count==0:raise ValueError('Keine gültigen amtlichen Gebäudeadressen im Datenstand.')
+  db.execute('UPDATE swisstopo_snapshots SET active=0')
+  db.execute('UPDATE swisstopo_snapshots SET active=1,address_count=? WHERE snapshot_id=?',(count,sid))
+ return sid,count
 
-
-def _official_status(value):
-    t=plain(value).casefold()
-    return {'1':'real','real':'real','in betrieb':'real',
-            '0':'planned','planned':'planned','projektiert':'planned',
-            '2':'outdated','outdated':'outdated','aufgehoben':'outdated'}.get(t,t)
-
-
-def _official(value):
-    t=plain(value).casefold()
-    if t in ('1','true','yes','ja'): return '1'
-    if t in ('0','false','no','nein'): return '0'
-    return ''
-
-
-def import_snapshot(db, file_path, reference_date, progress=None):
-    """Import a complete public reference snapshot, atomically activate on success.
-
-    Date is explicitly supplied, never made up from import time. Source SHA256 is
-    stored as integrity identifier. A snapshot's rows are never overwritten.
-    """
-    ensure_schema(db)
-    progress=progress or (lambda _:None)
-    path=Path(file_path).resolve()
-    if not path.is_file():
-        raise FileNotFoundError('Lokale swisstopo-Datei nicht gefunden.')
-    if path.stat().st_size > 1_500_000_000:
-        raise ValueError('Referenzdatei zu gross (>1.5GB).')
-    try:
-        date.fromisoformat(reference_date)
-    except (TypeError, ValueError) as exc:
-        raise ValueError('Datenstand muss YYYY-MM-DD sein.') from exc
-    digest=hashlib.sha256()
-    with path.open('rb') as f:
-        for block in iter(lambda:f.read(4*1024*1024),b''):
-            digest.update(block)
-    total=0
-    try:
-        with db:
-            sid=db.execute('''INSERT INTO swisstopo_snapshots(import_at,source_name,reference_date,source_sha256,address_count)
-                              VALUES(?,?,?,?,0)''', (now(),path.name,reference_date,digest.hexdigest())).lastrowid
-            batch=[]
-            for row in _members(path):
-                street=_extract(row,'street')
-                number=norm_house_number(_extract(row,'number'))
-                locations=_postcode_cities(row)
-                egaid=_extract(row,'egaid')
-                if not street or not locations:
-                    continue
-                aliases={norm_street(x): x.strip() for x in street.split(' / ') if norm_street(x)}
-                postal_labels={}
-                zip_label=plain(row.get('ZIP_LABEL',''))
-                for part in zip_label.split(','):
-                    found=re.fullmatch(r'\s*(\d{4})\s+(.+?)\s*',part)
-                    if found:
-                        postal_labels[(found.group(1),norm(found.group(2)))]=found.group(2).strip()
-                for postal, city in locations:
-                    for street_name, raw_street in aliases.items():
-                        batch.append((sid, postal, street_name, number, city, egaid,
-                                      raw_street, postal_labels.get((postal,city),_extract(row,'city')),
-                                      plain(_extract(row,'number')),
-                                      _official_status(_extract(row,'status')),_official(_extract(row,'official'))))
-                total+=1
-                if total>6_000_000:
-                    raise ValueError('Zu viele Datensätze: max. 6 Millionen.')
-                if len(batch)>=5000:
-                    db.executemany('''INSERT OR IGNORE INTO swisstopo_addresses
-                        (snapshot_id,postal,street,house,city,egaid,street_label,city_label,number_label,adr_status,official)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?)''',batch)
-                    batch.clear()
-                    if total%100000<5000:
-                        progress(f'{total:,} amtliche Datensätze eingelesen')
-            if batch:
-                db.executemany('''INSERT OR IGNORE INTO swisstopo_addresses
-                    (snapshot_id,postal,street,house,city,egaid,street_label,city_label,number_label,adr_status,official)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?)''',batch)
-            if total==0:
-                raise ValueError('Keine verwertbaren Gebäudeadressen in der Datei.')
-            db.execute('UPDATE swisstopo_snapshots SET active=0 WHERE active=1')
-            count=db.execute('SELECT count(*) FROM swisstopo_addresses WHERE snapshot_id=?',(sid,)).fetchone()[0]
-            db.execute('UPDATE swisstopo_snapshots SET active=1,address_count=? WHERE snapshot_id=?',(count,sid))
-    except Exception:
-        raise
-    return sid, count
-
-
-def _candidate(row):
-    # Ranking favours current, official entries, but only returns them as facts
-    # if the row itself explicitly carries their statuses.
-    return (row['adr_status']=='real', row['official']=='1',bool(row['egaid']))
-
-
-def validate_record(db, snapshot_id, rec):
-    if plain(json.loads(rec['original_json']).get('country')).casefold() not in ('', 'ch','che','schweiz','suisse','svizzera','switzerland'):
-        return ('ausland','', '')
-    postal=rec['postal']; street=rec['street_name']; house=rec['house_number']; city=rec['city']
-    if not postal or not street or not house:
-        return ('unvollstaendig','', '')
-    same_city=db.execute('''SELECT * FROM swisstopo_addresses
-                     WHERE snapshot_id=? AND postal=? AND street=? AND house=? AND city=? LIMIT 30''',
-                    (snapshot_id,postal,street,house,city)).fetchall() if city else []
-    rows=[]
-    if not same_city:
-        rows=db.execute('''SELECT * FROM swisstopo_addresses
-                     WHERE snapshot_id=? AND postal=? AND street=? AND house=? LIMIT 30''',
-                    (snapshot_id,postal,street,house)).fetchall()
-        if not city:
-            same_city=rows
-    if same_city:
-        best=sorted(same_city,key=_candidate,reverse=True)[0]
-        if best['adr_status']=='planned': state='geplant'
-        elif best['adr_status']=='outdated': state='aufgehoben'
-        elif best['adr_status']=='real' and best['official']=='1':
-            state='amtlich_aktuell'
-        elif best['official']=='0':
-            state='nicht_amtlich'
-        else:
-            state='status_unklar'
-        return (state, f"{postal} {best['city']} · {street} {house}",best['egaid'])
-    if rows:
-        best=sorted(rows,key=_candidate,reverse=True)[0]
-        return ('ort_abweichend',f"{postal} {best['city']} · {street} {house}",best['egaid'])
-    rows=db.execute('''SELECT * FROM swisstopo_addresses WHERE snapshot_id=? AND postal=? AND street=?
-                      LIMIT 10''',(snapshot_id,postal,street)).fetchall()
-    if rows:
-        return ('hausnummer_unbekannt',f"Strasse vorhanden, mögliche Hausnummern: {', '.join(dict.fromkeys(r['house'] for r in rows))}",'')
-    if city:
-        rows=db.execute('''SELECT * FROM swisstopo_addresses WHERE snapshot_id=? AND city=? AND street=? AND house=? LIMIT 10''',
-                        (snapshot_id,city,street,house)).fetchall()
-        if rows:
-            best=rows[0]
-            return ('plz_abweichend',f"{best['postal']} {best['city']} · {street} {house}",best['egaid'])
-    return ('nicht_gefunden','','')
-
-
-def validate_project(db,pid,snapshot_id=None,progress=None):
-    """Recheck entire project, persist snapshot ID with every result."""
-    ensure_schema(db)
-    snap=active_snapshot(db) if snapshot_id is None else db.execute(
-        'SELECT * FROM swisstopo_snapshots WHERE snapshot_id=?',(snapshot_id,)).fetchone()
-    if not snap:
-        raise ValueError('Kein lokaler swisstopo-Datenstand vorhanden.')
-    sid=snap['snapshot_id']
-    progress=progress or (lambda _:None)
-    done=0
-    with db:
-        db.execute('DELETE FROM swisstopo_results WHERE project_id=?',(pid,))
-        batch=[]
-        for row in db.execute('SELECT * FROM records WHERE project_id=? ORDER BY pk',(pid,)):
-            status, hint, egaid=validate_record(db,sid,row)
-            batch.append((pid,row['pk'],sid,status,hint,egaid,now()))
-            done+=1
-            if len(batch)>=1000:
-                db.executemany('''INSERT INTO swisstopo_results(project_id,record_pk,snapshot_id,result,
-                   suggestion,matched_egaid,processed_at) VALUES(?,?,?,?,?,?,?)''',batch)
-                batch.clear()
-                if done%10000<1000:
-                    progress(f'{done:,} CRM-Adressen lokal geprüft')
-        if batch:
-            db.executemany('''INSERT INTO swisstopo_results(project_id,record_pk,snapshot_id,result,
-                suggestion,matched_egaid,processed_at) VALUES(?,?,?,?,?,?,?)''',batch)
-    return done
-
-
+def validate_record(db,sid,record):
+ raw=json.loads(record.get('original_json') or '{}')
+ country=plain(raw.get('country'))
+ if country and norm(country) not in ('ch','che','schweiz','suisse','svizzera','switzerland'):
+  return 'ausland','Nichtschweizer Adresse',''
+ post=plain(record.get('postal'));street=plain(record.get('street_name'));house=plain(record.get('house_number'));city=plain(record.get('city'))
+ if not post or not street or not house:return 'unvollstaendig','Strasse, Hausnummer oder PLZ fehlt',''
+ rows=db.execute('''SELECT * FROM swisstopo_addresses WHERE snapshot_id=? AND postal=? AND street=? AND house=? LIMIT 60''',
+                 (sid,post,street,house)).fetchall()
+ if rows:
+  exact=[r for r in rows if not city or r['city']==city]
+  if not exact:return 'ort_abweichend','Ort weicht vom gefundenen amtlichen Eintrag ab',''
+  best=next((r for r in exact if r['adr_status']=='real' and r['official']=='1'),exact[0])
+  if best['adr_status']=='geplant':return 'geplant','Gebäudeadresse ist projektiert',best['egaid']
+  if best['adr_status']=='aufgehoben':return 'aufgehoben','Adresse ist aufgehoben',best['egaid']
+  if best['adr_status']!='real':return 'status_unklar','Status im Datenstand unklar',best['egaid']
+  if best['official']!='1':return 'nicht_amtlich','Nicht als amtlich bestätigt',best['egaid']
+  return 'amtlich_aktuell','Aktuelle amtliche Gebäudeadresse',best['egaid']
+ if city and db.execute('''SELECT 1 FROM swisstopo_addresses WHERE snapshot_id=? AND city=? AND street=? AND house=? LIMIT 1''',(sid,city,street,house)).fetchone():
+  return 'plz_abweichend','PLZ passt nicht zur angegebenen Adresse',''
+ candidate=db.execute('SELECT house FROM swisstopo_addresses WHERE snapshot_id=? AND postal=? AND street=? LIMIT 15',(sid,post,street)).fetchall()
+ if candidate:
+  nums=', '.join(dict.fromkeys(x['house'] for x in candidate))
+  return 'hausnummer_unbekannt',f'Strasse vorhanden, mögliche Hausnummern: {nums}',''
+ return 'nicht_gefunden','Kein Gebäudeadress-Treffer',''
+def validate_project(db,pid,progress=None):
+ sid=active_snapshot(db)
+ if not sid:raise ValueError('Kein swisstopo-Datenstand installiert.')
+ with db:
+  db.execute('DELETE FROM swisstopo_validation WHERE project_id=?',(pid,))
+  for row in db.execute("SELECT * FROM records WHERE project_id=? AND side='A'",(pid,)):
+   result,hint,egaid=validate_record(db,sid['snapshot_id'],row)
+   db.execute('INSERT INTO swisstopo_validation VALUES(?,?,?,?,?,?)',(pid,row['pk'],result,hint,egaid,sid['snapshot_id']))
 def validation_counts(db,pid):
-    return [dict(r) for r in db.execute('''SELECT rec.side, res.result, count(*) n
-        FROM swisstopo_results res JOIN records rec ON rec.pk=res.record_pk
-        WHERE res.project_id=? GROUP BY rec.side,res.result ORDER BY rec.side,res.result''',(pid,))]
-
-
+ return [dict(r) for r in db.execute('SELECT result,count(*) n FROM swisstopo_validation WHERE project_id=? GROUP BY result',(pid,))]
 def export_validation(db,pid):
-    import pandas as pd
-    query='''SELECT r.side crm, r.source_id crm_id,r.street_name strasse,r.house_number hausnummer,
-         r.postal plz,r.city ort,v.result validierungsstatus,v.suggestion korrekturvorschlag,
-         v.matched_egaid swisstopo_egaid, s.reference_date datenstand,
-         s.source_sha256 quell_sha256
-         FROM swisstopo_results v JOIN records r ON r.pk=v.record_pk
-         JOIN swisstopo_snapshots s ON s.snapshot_id=v.snapshot_id
-         WHERE v.project_id=? ORDER BY r.side,r.source_id'''
-    return pd.read_sql_query(query,db,params=(pid,)).to_csv(index=False,sep=';').encode('utf-8-sig')
+ import pandas as pd
+ return pd.read_sql_query('''SELECT r.source_id A_ID,v.result Status,v.hint Hinweis,v.egaid EGAID,s.reference_date Datenstand
+   FROM swisstopo_validation v JOIN records r ON r.pk=v.pk JOIN swisstopo_snapshots s ON s.snapshot_id=v.snapshot_id
+   WHERE v.project_id=?''',db,params=(pid,)).to_csv(index=False,sep=';').encode('utf-8-sig')

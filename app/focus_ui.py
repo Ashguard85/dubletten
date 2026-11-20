@@ -231,12 +231,14 @@ def _render_focus(db):
         st.info('Noch keine Prüfdaten vorhanden. Bitte zuerst ein CRM-Projekt oder eine Schweizer Adressprüfung importieren.')
         return
 
+    if st.session_state.get('focus_mode') not in available:
+        st.session_state['focus_mode'] = available[0]
     swiss_route = st.session_state.get('_focus_route_swiss')
     if swiss_route and MODES[2] in available:
         st.session_state['focus_mode'] = MODES[2]
         matching = next((j for j in jobs if j['job_id'] == swiss_route), None)
         if matching:
-            st.session_state['focus_selection_2'] = matching
+            st.session_state[f'focus_selection_{available.index(MODES[2])}'] = matching
     x, y = st.columns([2, 3], gap='small')
     with x:
         mode = st.selectbox('Prüfart', available, key='focus_mode')
@@ -428,6 +430,7 @@ def render_focus_workspace(db):
         if st.button('← Zurück zur Schweizer Adressprüfung', key='focus_exit_swiss', type='secondary'):
             st.session_state.pop('_focus_route_swiss', None)
             st.session_state['_focus_active'] = False
+            st.session_state['_next_nav'] = '📬 Schweizer Adressprüfung'
             st.rerun()
     st.markdown('**🎯 Fokusprüfung** · ein Fall nach dem anderen')
     _render_focus(db)
