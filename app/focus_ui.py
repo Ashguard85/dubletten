@@ -12,6 +12,8 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
+from field_colors import CSS as CRM_COLOR_CSS, pair_rows, reference_rows, html_table
+
 from focus_data import (
     REFERENCE_RESULTS, REFERENCE_DECISIONS,
     reference_focus_page, save_reference_review, export_reference_reviews,
@@ -19,7 +21,7 @@ from focus_data import (
 )
 
 MODES = ('CRM – fehlende Referenzen', 'CRM – vorhandene Referenzen',
-         'Schweizer Adressprüfung')
+         'Schweizer Adressprüfung', 'Interne Dublettenprüfung')
 
 
 FOCUS_CSS = '''<style>
@@ -130,7 +132,7 @@ def _swiss_queue(db, job_id, filters, position):
 
 
 def _queue(db, mode, identity, filters, position):
-    if mode == MODES[0]:
+    if mode in (MODES[0], MODES[3]):
         return _crm_queue(db, identity, filters, position)
     if mode == MODES[1]:
         return reference_focus_page(db, identity,
@@ -150,15 +152,25 @@ def _primary_diff(a, b):
 def _case_crm(db, pid, row):
     a, b = _raw(row,'a_json'), _raw(row,'b_json')
     a_id, b_id = row['a_id'], row['b_id']
+    internal = bool(db.execute("SELECT mode FROM projects WHERE project_id=?",(pid,)).fetchone()['mode']=='internal')
+    caption_1,caption_2=('Datensatz 1','Datensatz 2') if internal else ('CRM A','CRM B')
     head, info = st.columns([5, 2])
     head.text(f'{_short(_head(a, a_id), 100)}  ↔  {_short(_head(b, b_id), 100)}')
     info.caption(f"Score {row['score']}/100 · {_caption(row['state'])}")
-    st.text(f'CRM A: {a_id}     ·     CRM B: {b_id}')
-    _table_rows(_plain_rows(a,b,row['a_house'],row['b_house']))
+    st.text(f'{caption_1}: {a_id}     ·     {caption_2}: {b_id}')
+    def address(raw):
+        return (str(raw.get('street','')).strip()+' · '+str(raw.get('postcode','')).strip()+' '+str(raw.get('city','')).strip()).strip(' ·')
+    ca,cb=st.columns(2,gap='small')
+    ca.caption(f'**Original {caption_1}:** {address(a)}')
+    cb.caption(f'**Original {caption_2}:** {address(b)}')
+    st.markdown(html_table(pair_rows(a,b,row['a_house'],row['b_house']),label_a=caption_1,label_b=caption_2), unsafe_allow_html=True)
     with st.expander('Zusätzliche Unterschiede und Vergleichshinweise', expanded=False):
         extra = _primary_diff(a,b)
         if extra:
-            _table_rows(extra)
+            st.markdown(html_table([r for r in pair_rows(a,b,row['a_house'],row['b_house'],extra=True)[5:]
+                                    if r['tone'] != 'green' or r['label'] != '✓ identisch'],
+                                   note='Zusätzliche Felder; Unterschiede sind kein Identitätsbeweis.'),
+                        unsafe_allow_html=True)
         st.text('Algorithmische Hinweise: ' + _caption(row['reason']))
         if row['llm_decision']:
             st.text('Früherer KI-Vorschlag (nicht verbindlich): '+_caption(row['llm_decision']))
@@ -173,25 +185,24 @@ def _case_reference(db, pid, row):
         diffs = json.loads(row['differences_json'] or '[]')
     except (ValueError, TypeError):
         diffs = []
-    important = [d for d in diffs if d.get('status') in ('abweichend','fehlt')]
-    others = [d for d in diffs if d not in important]
     if row['result']=='referenz_fehlt':
-        st.warning('Die B-Referenz ist im B-Export nicht vorhanden.')
-    elif not important:
-        st.caption('Keine inhaltlich abweichenden Felder gefunden.')
-    if important:
-        st.dataframe(pd.DataFrame([{'Feld':d.get('bezeichnung',d.get('feld','')),
-                 'CRM A':_short(d.get('a_wert','')), 'CRM B':_short(d.get('b_wert',''))}
-                 for d in important[:7]]), hide_index=True, use_container_width=True,
-                 height=min(245, 37+36*min(7,len(important))))
-    with st.expander('Alle Felder und Originalwerte', expanded=False):
-        if len(important)>7:
-            st.dataframe(pd.DataFrame(important[7:]),hide_index=True,use_container_width=True)
-        if others:
-            st.dataframe(pd.DataFrame([{'Feld':d.get('bezeichnung', ''),
-                  'CRM A':d.get('a_wert',''), 'CRM B':d.get('b_wert',''),
-                  'Status':d.get('status','')} for d in others]),hide_index=True,use_container_width=True)
-        st.caption('Originaldaten')
+        st.warning('B-Referenz fehlt im CRM-B-Export. Kein Feldvergleich möglich.')
+    elif row['result']=='mehrfachreferenz':
+        st.warning('Die B-Referenz wird mehrfach verwendet. Feldfarben bestätigen keine eindeutige Zuordnung.')
+    rows=reference_rows(diffs)
+    preferred=('Firma','Vorname','Nachname','Strasse','Hausnummer','PLZ','Ort')
+    core=[r for r in rows if r['field'] in preferred]
+    rest=[r for r in rows if r['field'] not in preferred]
+    if core:
+        # Put mismatches first; show matching fields to keep the reason evident.
+        core.sort(key=lambda r:({'red':0,'amber':1,'neutral':2,'green':3}[r['tone']], preferred.index(r['field'])))
+        st.markdown(html_table(core, note='Vergleich gemäss gespeichertem Referenzbericht; rot bedeutet Feldabweichung, nicht andere Identität.'),
+                    unsafe_allow_html=True)
+    elif not diffs and row['result']!='referenz_fehlt':
+        st.caption('Im gespeicherten Referenzbericht sind keine Feldunterschiede vorhanden.')
+    with st.expander('Weitere Felder und Originaldaten', expanded=False):
+        if rest:
+            st.markdown(html_table(rest), unsafe_allow_html=True)
         st.json({'A':_raw(row,'a_json'),'B':_raw(row,'b_json')})
 
 
@@ -205,7 +216,8 @@ def _scope_key(mode, identity):
 
 
 def _mode_choices(db):
-    projects=[dict(x) for x in db.execute('SELECT project_id,title FROM projects ORDER BY project_id DESC')]
+    projects=[dict(x) for x in db.execute("SELECT project_id,title FROM projects WHERE mode!='internal' ORDER BY project_id DESC")]
+    internal=[dict(x) for x in db.execute("SELECT project_id,title FROM projects WHERE mode='internal' ORDER BY project_id DESC")]
     from migration import is_dual
     dual=[p for p in projects if is_dual(db,p['project_id'])]
     try:
@@ -213,13 +225,13 @@ def _mode_choices(db):
         jobs=list_jobs(db)
     except Exception:
         jobs=[]
-    return projects,dual,jobs
+    return projects,dual,jobs,internal
 
 
 
 @st.fragment
 def _render_focus(db):
-    projects, dual, jobs = _mode_choices(db)
+    projects, dual, jobs, internal = _mode_choices(db)
     available = []
     if projects:
         available.append(MODES[0])
@@ -227,6 +239,8 @@ def _render_focus(db):
         available.append(MODES[1])
     if jobs:
         available.append(MODES[2])
+    if internal:
+        available.append(MODES[3])
     if not available:
         st.info('Noch keine Prüfdaten vorhanden. Bitte zuerst ein CRM-Projekt oder eine Schweizer Adressprüfung importieren.')
         return
@@ -239,10 +253,16 @@ def _render_focus(db):
         matching = next((j for j in jobs if j['job_id'] == swiss_route), None)
         if matching:
             st.session_state[f'focus_selection_{available.index(MODES[2])}'] = matching
+    internal_route = st.session_state.pop('_focus_route_internal', None)
+    if internal_route and MODES[3] in available:
+        target = next((j for j in internal if j['project_id']==internal_route), None)
+        if target:
+            st.session_state['focus_mode']=MODES[3]
+            st.session_state[f'focus_selection_{available.index(MODES[3])}']=target
     x, y = st.columns([2, 3], gap='small')
     with x:
         mode = st.selectbox('Prüfart', available, key='focus_mode')
-    candidates = jobs if mode == MODES[2] else dual if mode == MODES[1] else projects
+    candidates = jobs if mode == MODES[2] else dual if mode == MODES[1] else internal if mode == MODES[3] else projects
     with y:
         choice = st.selectbox('Prüfauftrag / Projekt', candidates,
              format_func=lambda q: f"#{q.get('job_id',q.get('project_id'))} · {q['title']}",
@@ -257,7 +277,7 @@ def _render_focus(db):
     with st.expander('⚙️ Filter wählen / ändern', expanded=applied is None):
         with st.form(f'focus_filters_{token}'):
             ca, cb, cc = st.columns([2, 2, 3])
-            if mode == MODES[0]:
+            if mode in (MODES[0],MODES[3]):
                 with ca:
                     status = st.selectbox('Prüfstatus', ['offen','unklar','Alle','bestaetigt','abgelehnt'])
                 with cb:
@@ -353,7 +373,7 @@ def _render_focus(db):
         return
 
     try:
-        if mode==MODES[0]:
+        if mode in (MODES[0],MODES[3]):
             _case_crm(db,identity,row)
             ca,cb,cc,cd,ce=st.columns(5,gap='small')
             did_ok=ca.button('✓ Bestätigen',type='primary',use_container_width=True,key=f'fok_{token}')
@@ -425,7 +445,7 @@ def _render_focus(db):
 
 
 def render_focus_workspace(db):
-    st.markdown(FOCUS_CSS, unsafe_allow_html=True)
+    st.markdown(FOCUS_CSS + CRM_COLOR_CSS, unsafe_allow_html=True)
     if st.session_state.get('_focus_route_swiss'):
         if st.button('← Zurück zur Schweizer Adressprüfung', key='focus_exit_swiss', type='secondary'):
             st.session_state.pop('_focus_route_swiss', None)

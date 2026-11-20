@@ -1,0 +1,29 @@
+﻿ID;Firma;Vorname;Nachname;Strasse;Hausnummer;PLZ;Ort;Land;E-Mail;Telefon;UID;Testfall;Soll_Gruppe
+I001;Müller Elektro AG;;;Bahnhofstrasse 12;;8001;Zürich;CH;kontakt@mueller.example.test;;;Gruppe A;A
+I002;Mueller Elektro;;;Bahnhofstr. 12;;8001;Zürich;CH;kontakt@mueller.example.test;;;Schreibweise;A
+I003;Müller Elektro AG;;;Bahnhofstrasse 12;;8001;Zuerich;CH;;;;Realer Kandidat;A
+I004;Bieri Treuhand AG;;;Pilatusstrasse 6;;6003;Luzern;CH;info@bieri.example.test;;;Gruppe B;B
+I005;Bieri Treuhand;;;Pilatusstr. 6;;6003;Luzern;CH;info@bieri.example.test;;;Rechtsform;B
+I006;Bieri Treuhand SA;;;Pilatusstrasse 6;;6003;Luzern;CH;;;;Rechtsform;B
+I007;Alpenlogistik AG;;;Hauptstrasse 16;;9000;St. Gallen;CH;office@alpenlogistik.example.test;;;Gruppe C;C
+I008;Alpenlogistik;;;Hauptstr. 16;;9000;St. Gallen;CH;office@alpenlogistik.example.test;;;Abkürzung;C
+I009;Alpenlogistik AG;;;Hauptstrasse 16;;9000;Sankt Gallen;CH;;;;Ortsvariante;C
+I010;Keller Haustechnik GmbH;;;Zürcherstrasse 8;;9500;Wil;CH;kontakt@keller.example.test;;;Gruppe D;D
+I011;Keller Haustechnik;;;Zürcherstr. 8;;9500;Wil;CH;;;;Schreibweise;D
+I012;Keller Haustechnik GmbH;;;Zürcherstrasse 8;;9500;Wil;CH;kontakt@keller.example.test;;;Exakter Treffer;D
+I013;Sonnenberg IT AG;;;Oberdorfstrasse 12;;9400;Rorschach;CH;hello@sonnenberg.example.test;;;Gruppe E;E
+I014;Sonnenberg IT;;;Oberdorfstr. 12;;9400;Rorschach;CH;hello@sonnenberg.example.test;;;Schreibweise;E
+I015;Sonnenberg IT AG;;;Oberdorfstrasse 12;;9400;Rorschach;CH;;;;Rechtsform;E
+I016;Gasser Transporte AG;;;Industriestrasse 3;;8400;Winterthur;CH;;;;Voraussichtlich ohne Dublette;
+I017;Rigi Holzbau GmbH;;;Bergstrasse 15;;6005;Luzern;CH;;;;Voraussichtlich ohne Dublette;
+I018;Limmat Reinigung AG;;;Seestrasse 8;;8002;Zürich;CH;;;;Voraussichtlich ohne Dublette;
+I019;Küenzi Software GmbH;;;Dorfstrasse 9;;6300;Zug;CH;;;;Voraussichtlich ohne Dublette;
+I020;Wiler Bäckerei AG;;;Marktgasse 2;;9500;Wil;CH;;;;Voraussichtlich ohne Dublette;
+I021;Mittelland Architekten AG;;;Aarestrasse 10;;5000;Aarau;CH;;;;Voraussichtlich ohne Dublette;
+I022;Toggenburg Metallbau;;;Neugasse 12;;9630;Wattwil;CH;;;;Voraussichtlich ohne Dublette;
+I023;Seeland Gartenbau;;;Feldstrasse 5;;2500;Biel;CH;;;;Voraussichtlich ohne Dublette;
+I024;Säntis Print GmbH;;;St. Leonhard-Strasse 6;;9000;St. Gallen;CH;;;;Voraussichtlich ohne Dublette;
+I025;Kreuzlinger Bau AG;;;Hafenstrasse 7;;8280;Kreuzlingen;CH;;;;Voraussichtlich ohne Dublette;
+I026;Müller Elektro AG;;;Bahnhofstrasse 14;;8001;Zürich;CH;;;;Gleicher Name, andere Hausnummer – manuell prüfen;
+I027;Bieri Treuhand AG;;;Pilatusstrasse 6;;6004;Luzern;CH;;;;Gleicher Name, andere PLZ – manuell prüfen;
+I028;Anderer Betrieb GmbH;;;Bahnhofstrasse 12;;8001;Zürich;CH;;;;Gleiche Adresse, anderer Betrieb;

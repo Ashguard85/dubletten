@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: crm-dubletten:1.8.5-neu
+    image: crm-dubletten:1.8.7-neu
     ports:
       - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-8192}:8501"
     environment:

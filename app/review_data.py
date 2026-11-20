@@ -12,7 +12,12 @@ def pair_page(db,pid,state='offen',min_score=0,search='',risk='Alle',page=1,page
  elif risk=='UID verschieden':
   where.append("a.uid!='' AND b.uid!='' AND a.uid!=b.uid")
  elif risk=='Mehrfachkandidat':
-  where.append('''(SELECT COUNT(*) FROM pairs c WHERE c.project_id=p.project_id AND c.a_pk=p.a_pk)>1''')
+  internal=db.execute('SELECT mode FROM projects WHERE project_id=?',(pid,)).fetchone()['mode']=='internal'
+  if internal:
+   where.append('''((SELECT COUNT(*) FROM pairs c WHERE c.project_id=p.project_id AND (c.a_pk=p.a_pk OR c.b_pk=p.a_pk))>1
+     OR (SELECT COUNT(*) FROM pairs c WHERE c.project_id=p.project_id AND (c.a_pk=p.b_pk OR c.b_pk=p.b_pk))>1)''')
+  else:
+   where.append('''(SELECT COUNT(*) FROM pairs c WHERE c.project_id=p.project_id AND c.a_pk=p.a_pk)>1''')
  query='''FROM pairs p JOIN records a ON a.pk=p.a_pk JOIN records b ON b.pk=p.b_pk WHERE '''+' AND '.join(where)
  count=db.execute('SELECT count(*) '+query,params).fetchone()[0]
  size=max(1,min(50,int(page_size)));total_pages=max(1,(count+size-1)//size);page=max(1,min(int(page),total_pages))

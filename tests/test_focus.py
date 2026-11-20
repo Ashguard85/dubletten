@@ -115,7 +115,8 @@ def test_focus_layout_helpers_without_streamlit_installation(monkeypatch):
                                   {'company':'Other AG','street':'Strasse 14','postcode':'1234','city':'Luzern'},
                                   '12','14'))==4
     assert len(module._short('X'*200))==75
-    assert len(module.MODES)==3
+    assert len(module.MODES)==4
+    assert module.MODES[3]=='Interne Dublettenprüfung'
 
 
 def test_crm_queue_is_server_paginated(monkeypatch):

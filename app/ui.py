@@ -1,4 +1,4 @@
-"""Complete fresh-install Streamlit CRM address and migration auditing UI v1.8.5.
+"""Complete fresh-install Streamlit CRM address and migration auditing UI v1.8.7.
 
 All workflows local, no CRM writes, opt-in local Ollama, Swiss focus reviews.
 """
@@ -15,6 +15,7 @@ from swisstopo import (ensure_schema as ensure_sw,active_snapshot,list_snapshots
  inspect_source,import_snapshot,validate_project,validation_counts,export_validation,RESULT_LABELS)
 from address_service_ui import render as render_addresses
 from focus_ui import render_focus_workspace
+from internal_ui import render_create as render_internal_create, render_project as render_internal_project
 from review_ui import render_review
 from ai_control import ensure_schema as ensure_ai,is_enabled as ai_is_enabled,set_enabled as set_ai_enabled
 from llm import models,MODEL
@@ -50,7 +51,7 @@ with st.sidebar:
  st.markdown('### Arbeitsbereich')
  projects=list_projects(db)
  labels={f"#{j['project_id']} · {j['title']}":j['project_id'] for j in projects}
- choices=['+ Neuer Abgleich','📬 Schweizer Adressprüfung','🏔️ swisstopo-Datenstand','🎯 Fokusmodus',*labels]
+ choices=['+ Neuer Abgleich','➕ Interne Dublettenprüfung','📬 Schweizer Adressprüfung','🏔️ swisstopo-Datenstand','🎯 Fokusmodus',*labels]
  if st.session_state.get('nav_selected') not in choices:
   st.session_state['nav_selected']='+ Neuer Abgleich'
  selected=st.selectbox('Dienst / Projekt',choices,key='nav_selected')
@@ -72,7 +73,7 @@ with st.sidebar:
 # Avoid tall dashboard headings during case-by-case review.
 if selected!='🎯 Fokusmodus':
  st.title('🔎 CRM-Dubletten Lokal')
- st.caption('GUI v1.8.5 · Schweizer Adressprüfung · CRM A→B · RapidFuzz / Splink 5 · optionales lokales Ollama')
+ st.caption('GUI v1.8.7 · Interne Dubletten · Schweizer Adressprüfung · CRM A→B · RapidFuzz / Splink 5 · optionale KI')
 
 if selected=='🎯 Fokusmodus':
  render_focus_workspace(db)
@@ -147,6 +148,10 @@ def splink_settings(prefix):
    em=st.select_slider('EM-Paare je Regel',options=[10000,50000,100000,250000,500000,1000000],value=250000,key=prefix+'_em')
  return validate_config(dict(split_house_number=split,name_thresholds=[name_hi,name_low],street_distances=[d1,d2],blocking_fields=blocks,u_max_pairs=u,em_max_pairs=em))
 
+if selected=='➕ Interne Dublettenprüfung':
+ render_internal_create(db,mapping_form,splink_settings)
+ st.stop()
+
 if selected=='+ Neuer Abgleich':
  st.subheader('Neuen CRM-A→B-Abgleich erstellen')
  a,b=st.columns(2)
@@ -194,6 +199,9 @@ if selected=='+ Neuer Abgleich':
 pid=labels.get(selected)
 if not pid:st.stop()
 info=project_stats(db,pid)
+if info.get('mode')=='internal':
+ render_internal_project(db,pid,selected_model,bool(installed),enabled)
+ st.stop()
 st.subheader(f"#{pid} · {info.get('title',selected)}")
 a,b,c,d=st.columns(4)
 a.metric('CRM A',info.get('a_count',0));b.metric('CRM B',info.get('b_count',0));c.metric('Kandidaten',info.get('candidate_count',0));d.metric('Noch offen',info.get('pending',0))

@@ -1,12 +1,11 @@
 {
-  "name": "CRM-Dubletten Lokal v1.8.5 – vollständige Neuinstallation",
-  "nature": "Eigenständige, konsolidierte Quellcodebasis; nicht byteidentischer Export einer vorhandenen produktiven Datenbank",
-  "packaged_on": "2026-11-20",
+  "name": "CRM-Dubletten Lokal v1.8.7 – vollständige Neuinstallation mit interner Dublettenprüfung",
+  "note": "Vollständiger Quellcode, nicht die vorhandene Produktionsdatenbank",
   "contains_real_crm_data": false,
   "contains_official_swisstopo_snapshot": false,
   "initial_port": 8192,
-  "app_modules": 16,
-  "automated_tests_passed": 19,
+  "app_modules": 19,
+  "automated_tests_passed": 33,
   "files": [
     {
       "path": ".dockerignore",
@@ -15,8 +14,8 @@
     },
     {
       "path": ".gitignore",
-      "bytes": 284,
-      "sha256": "340a8955dd1a33ba5912ac8f2e10fd8d581fd47fc8d1bc401ee94ff7707697f3"
+      "bytes": 335,
+      "sha256": "c80fcb47d8788f01df626f7a87be2064af66390faaa55431eb5e3f1f8aca3f58"
     },
     {
       "path": ".streamlit/config.toml",
@@ -25,8 +24,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "bytes": 1040,
-      "sha256": "e7a55d7e7d8c17167b8e7ee8983d8c972ada768c9847f7c369a974a0bb7f4568"
+      "bytes": 4013,
+      "sha256": "9d9909a31ebb7a37bdb02223f251bb51c179da04b9207c980ea38255aff90fcb"
     },
     {
       "path": "Dockerfile",
@@ -35,18 +34,28 @@
     },
     {
       "path": "INSTALLATION-NEU.md",
-      "bytes": 8829,
-      "sha256": "e0bf59a7a689389867847d00d4142e430e2e1506579e05a9c529a2c015c01351"
+      "bytes": 13028,
+      "sha256": "3e1d65d696ffc51126df1fe9323edd9b66012f1a1fe17fed213af2a31936f6d0"
     },
     {
       "path": "README.md",
-      "bytes": 3775,
-      "sha256": "b3d10f1a70548df597c060877d0be6cd3b069cd5960b1432de33120d5cfc5b96"
+      "bytes": 5417,
+      "sha256": "eca0473278892b7dc4a5c08b645419775e3f1ddbc3691b74bc5dc77f8dc7d15e"
     },
     {
       "path": "TESTDATEN-SOLLRESULTATE.md",
-      "bytes": 1486,
-      "sha256": "56840b1cce37fdf57ee68acfa44214fb7ca78772678002f94e87bc9b0fb5f9d6"
+      "bytes": 3216,
+      "sha256": "b11b51f7d852f5f9afa135f21a93549bd28a2834ec9df34eccd0dd0b6d1a851a"
+    },
+    {
+      "path": "UPDATE-1.8.6.md",
+      "bytes": 2545,
+      "sha256": "becfc326a86151edb3b250573175b1156779393790fcfd04279a9c0b82db62f2"
+    },
+    {
+      "path": "UPDATE-1.8.7.md",
+      "bytes": 4009,
+      "sha256": "5a63963a27db7aa0895a08eed996272e1906059a463c25cbfc28a5379a89dfb5"
     },
     {
       "path": "app/address_service.py",
@@ -65,8 +74,13 @@
     },
     {
       "path": "app/engine.py",
-      "bytes": 18131,
-      "sha256": "36b84540a803831fed7d5b6d851c8a7799e247a7141d4e0b6225ffc4d42934f3"
+      "bytes": 18614,
+      "sha256": "7d71a775ed6e83b5d5ec70b0185b742a7eafcd60acd561474f8ef94be9fed8e7"
+    },
+    {
+      "path": "app/field_colors.py",
+      "bytes": 7121,
+      "sha256": "d76f5a221a4d691cea03496388c874f0f9680fdd74fd4813038e9ca9c6228b3e"
     },
     {
       "path": "app/focus_data.py",
@@ -85,8 +99,18 @@
     },
     {
       "path": "app/focus_ui.py",
-      "bytes": 21411,
-      "sha256": "f9bfad0c9e17ed52bc282f6eb1ab66b2ce2dc13bc3e5cca06eca17c716b71cae"
+      "bytes": 23168,
+      "sha256": "a41936434e8ac862286326eb08bb328f020dd2656fe0fa4f2a410b9f3c23187c"
+    },
+    {
+      "path": "app/internal_dupes.py",
+      "bytes": 12221,
+      "sha256": "564432091800844ca7f0a5e1ecda7c42e8657e77f276e63d4bf00c0d5e7e261e"
+    },
+    {
+      "path": "app/internal_ui.py",
+      "bytes": 6403,
+      "sha256": "8d97f30aee51279ba1e3516eac07a1c143a7b41f023f1422a285fa31d3c6e858"
     },
     {
       "path": "app/llm.py",
@@ -105,18 +129,18 @@
     },
     {
       "path": "app/review_data.py",
-      "bytes": 1714,
-      "sha256": "b7c1648e7f3208b871e2928abf095e9e18d919a86e34cf2b7ed076e41da440d6"
+      "bytes": 2083,
+      "sha256": "1a45d5f9e330b9303379258d59fb5c434b191c11b6e870ef78a6d655fe44b244"
     },
     {
       "path": "app/review_ui.py",
-      "bytes": 4264,
-      "sha256": "c06c87bef07f34623f871e18b2211992ddeab6f4579d34c1d9bdd7c724fe9a48"
+      "bytes": 4631,
+      "sha256": "2a00f00551ac2c96021b48af802bc16f39ba9dbca77e4b3e4eb0458ed1f5b09d"
     },
     {
       "path": "app/splink_matcher.py",
-      "bytes": 9549,
-      "sha256": "d4cc0b7bdc2e1aaac2d97691243a4189deb55087a35203e8f802803b2464a0f4"
+      "bytes": 14226,
+      "sha256": "89dd80cd5fe32512395a8a3daea4ee852e1ff49063864249ed756b25947a2aa4"
     },
     {
       "path": "app/swisstopo.py",
@@ -125,8 +149,8 @@
     },
     {
       "path": "app/ui.py",
-      "bytes": 15263,
-      "sha256": "e11834bf5bd68729ad3015bf3427fac9c788d772453679d186689bbf2a0fb58a"
+      "bytes": 15641,
+      "sha256": "fa87cba7b1e1df520b638c21afd79eaf52f470df8a1658ca5556ee48874968e4"
     },
     {
       "path": "examples/CRM_A_Testdaten_Fokusmodus.csv",
@@ -137,6 +161,11 @@
       "path": "examples/CRM_B_Testdaten_Fokusmodus.csv",
       "bytes": 6510,
       "sha256": "1b99a24cce8f4f7f2148796ee454e8882a6a5493a12e2332610c94e85cf2f9f9"
+    },
+    {
+      "path": "examples/CRM_Intern_Dubletten_Testdaten_v187.csv",
+      "bytes": 2795,
+      "sha256": "eb2cb05f1643410cbf7e8c91aa07227d2fd908aeae37c0a4c5d9715fec3b7cf0"
     },
     {
       "path": "examples/TEST-SWISSTOPO-KLEIN.csv",
@@ -166,17 +195,22 @@
     {
       "path": "stack-portainer-git.yml",
       "bytes": 1630,
-      "sha256": "fa855753fa7580f24851fed39a4489851b4d31af15724dabe62950965da46c3e"
+      "sha256": "cabb9a78f3d4208fc2f5b3dc66404f977d7792bcc5c21841e09789567c5eaadd"
     },
     {
       "path": "stack-portainer-local.yml",
       "bytes": 981,
-      "sha256": "c59ce10162473a80d7ff954bb7a2d498bb0fa1c9f816c229d2544fea32004a0e"
+      "sha256": "3411c648a4b0f46aaf2d21f325b41af6d3e564ca9069ba043dbe765af3d05e5b"
+    },
+    {
+      "path": "tests/test_field_colors_v186.py",
+      "bytes": 4643,
+      "sha256": "e93f754e921e85a2e7e9e358f6b22138bf98d25128b0d86b86f2a525bb25380c"
     },
     {
       "path": "tests/test_focus.py",
-      "bytes": 5857,
-      "sha256": "7024b7fcc698864b09298bc1576c25e5682fe8df681f5c9e182026dcaddce6d9"
+      "bytes": 5913,
+      "sha256": "036db3b5bd1de3bbd93fbc11effc114879c1a65b6fe519615494e2b6cb3f9fee"
     },
     {
       "path": "tests/test_focus_swiss_v185.py",
@@ -187,6 +221,11 @@
       "path": "tests/test_install_integration.py",
       "bytes": 5870,
       "sha256": "6c02034ef78f10aae96446c78946c023de0d0980796122d0d3438cb347fd8d56"
+    },
+    {
+      "path": "tests/test_internal_dupes_v187.py",
+      "bytes": 8246,
+      "sha256": "08fc3dccbcefcd7f047971c0c7d95c926cce5a847623772cc855cf8452bfe6c5"
     }
   ]
 }

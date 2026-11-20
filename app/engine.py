@@ -134,9 +134,9 @@ def connect(path):
 
 def import_project(db,title,fa,ma,fb,mb,engine='rapidfuzz',mode='dual',a_ref_column='',a_exclude_column='',exclude_values=(),empty_reference_markers=()):
  if engine not in ('rapidfuzz','splink5'):raise ValueError('Unbekannte Engine.')
- if mode not in ('dual','legacy'):raise ValueError('Unbekannter Modus.')
+ if mode not in ('dual','legacy','internal'):raise ValueError('Unbekannter Modus.')
  if mode=='dual' and a_ref_column not in fa.columns:raise ValueError('B-Referenzspalte aus A fehlt.')
- for frame,m,side in ((fa,ma,'A'),(fb,mb,'B')):
+ for frame,m,side in (((fa,ma,'A'),) if mode=='internal' else ((fa,ma,'A'),(fb,mb,'B'))):
   if not m.get('id') or m['id'] not in frame.columns:raise ValueError(f'CRM {side}: ID-Spalte erforderlich.')
   ids=frame[m['id']].map(plain)
   if ids.eq('').any() or ids.duplicated().any():raise ValueError(f'CRM {side}: Leere oder doppelte IDs.')
@@ -145,8 +145,8 @@ def import_project(db,title,fa,ma,fb,mb,engine='rapidfuzz',mode='dual',a_ref_col
  cols='project_id side source_id original_json source_json name street postal city email phone uid zip_name zip_street city_name name_head street_number street_name house_number address_conflict b_reference in_scope'.split()
  with db:
   pid=db.execute('INSERT INTO projects(title,created_at,a_count,b_count,engine,mode,ref_column) VALUES(?,?,?,?,?,?,?)',
-    (plain(title)[:140] or 'CRM-Prüfung',now(),len(fa),len(fb),engine,mode,a_ref_column)).lastrowid
-  for side,frame,m in (('A',fa,ma),('B',fb,mb)):
+    (plain(title)[:140] or 'CRM-Prüfung',now(),len(fa),0 if mode=='internal' else len(fb),engine,mode,a_ref_column)).lastrowid
+  for side,frame,m in ((('A',fa,ma),) if mode=='internal' else (('A',fa,ma),('B',fb,mb))):
    batch=[]
    for row in frame.itertuples(index=False,name=None):
     original=dict(zip(frame.columns,[plain(x) for x in row]))
@@ -180,6 +180,8 @@ def score_pair(a,b):
  return max(0,min(100,round(score))),', '.join(explain)
 
 def run_matching(db,pid,minimum=60,max_candidates=400000,progress=None):
+ from internal_dupes import is_internal, run_internal_matching
+ if is_internal(db,pid):return run_internal_matching(db,pid,minimum,max_candidates,progress)
  progress=progress or (lambda x:None)
  mode=db.execute('SELECT mode FROM projects WHERE project_id=?',(pid,)).fetchone()['mode']
  with db:
@@ -232,6 +234,10 @@ def set_review(db,pid,a_pk,b_pk,state):
  if state not in ('offen','bestaetigt','abgelehnt','unklar'):raise ValueError('Ungültiger Prüfstatus.')
  with db:
   if state=='bestaetigt':
+   from internal_dupes import is_internal
+   if is_internal(db,pid):
+    db.execute('UPDATE pairs SET state=?,updated_at=? WHERE project_id=? AND a_pk=? AND b_pk=?',(state,now(),pid,a_pk,b_pk))
+    return
    from migration import is_dual,reference_conflict
    if is_dual(db,pid) and reference_conflict(db,pid,a_pk,b_pk):raise ValueError('B-ID ist bereits bei anderer A-Adresse referenziert.')
    conflict=db.execute("SELECT 1 FROM pairs WHERE project_id=? AND state='bestaetigt' AND (a_pk=? OR b_pk=?) AND NOT(a_pk=? AND b_pk=?)",(pid,a_pk,b_pk,a_pk,b_pk)).fetchone()

@@ -7,10 +7,14 @@ from review_data import pair_page,RISKS
 from engine import set_review,save_llm,comparison_diagnostics
 from ai_control import is_enabled as ai_is_enabled
 from llm import assess
+from field_colors import CSS as CRM_COLOR_CSS, pair_rows, html_table
 
 @st.fragment
 def render_review(db,pid,is_splink=False,selected_model='',installed=False,ai_enabled=False):
- st.subheader('CRM-Kandidaten prüfen')
+ st.markdown(CRM_COLOR_CSS, unsafe_allow_html=True)
+ internal=db.execute('SELECT mode FROM projects WHERE project_id=?',(pid,)).fetchone()['mode']=='internal'
+ label_a,label_b=('Datensatz 1','Datensatz 2') if internal else ('CRM A','CRM B')
+ st.subheader('Interne Kandidaten prüfen' if internal else 'CRM-Kandidaten prüfen')
  a,b,c,d=st.columns(4)
  with a:state=st.selectbox('Entscheid',['offen','unklar','Alle','bestaetigt','abgelehnt'],key=f'rstate_{pid}')
  with b:score=st.slider('Score ≥',0,100,55,key=f'rscore_{pid}')
@@ -24,13 +28,14 @@ def render_review(db,pid,is_splink=False,selected_model='',installed=False,ai_en
   stats=db.execute('SELECT state,count(*) n FROM pairs WHERE project_id=? GROUP BY state',(pid,)).fetchall()
   st.dataframe(pd.DataFrame([dict(x) for x in stats]),hide_index=True,use_container_width=True,height=170)
  if view=='Data Grid':
-  st.dataframe(pd.DataFrame([{'A':r['a_id'],'B':r['b_id'],'Score':r['score'],'Entscheid':r['state']} for r in rows]),hide_index=True,use_container_width=True,height=250)
+  st.dataframe(pd.DataFrame([{label_a:r['a_id'],label_b:r['b_id'],'Score':r['score'],'Entscheid':r['state']} for r in rows]),hide_index=True,use_container_width=True,height=250)
  idx=st.selectbox('Paar auswählen',range(len(rows)),format_func=lambda i: f"{rows[i]['a_id']} ↔ {rows[i]['b_id']} · {rows[i]['score']}/100 · {rows[i]['state']}",key=f'ridx_{pid}')
  row=rows[idx]
  left=json.loads(row['a_json']);right=json.loads(row['b_json'])
- show=['company','first_name','last_name','street','house_number','postcode','city','uid','email','phone']
- table=[{'Feld':k,'CRM A':left.get(k,''),'CRM B':right.get(k,''),'Gleich':left.get(k,'').casefold()==right.get(k,'').casefold()} for k in show if left.get(k) or right.get(k)]
- st.dataframe(pd.DataFrame(table),hide_index=True,use_container_width=True,height=270)
+ st.markdown(html_table(pair_rows(left,right,row['a_house'],row['b_house']),label_a=label_a,label_b=label_b),unsafe_allow_html=True)
+ with st.expander('Weitere Felder vergleichen',expanded=False):
+  extras=pair_rows(left,right,row['a_house'],row['b_house'],extra=True)[5:]
+  if extras:st.markdown(html_table(extras,label_a=label_a,label_b=label_b),unsafe_allow_html=True)
  ca,cb,cc,cd=st.columns(4)
  action=('bestaetigt' if ca.button('✓ Bestätigen',key=f'raccept_{pid}') else
          'abgelehnt' if cb.button('✕ Ablehnen',key=f'rreject_{pid}') else
