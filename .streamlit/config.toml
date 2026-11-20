@@ -1,0 +1,16 @@
+[server]
+headless = true
+maxUploadSize = 60
+maxMessageSize = 90
+enableCORS = true
+enableXsrfProtection = true
+enableStaticServing = false
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = false
+
+[logger]
+level = "warning"
