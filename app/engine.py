@@ -278,39 +278,56 @@ def connect(db_path):
         db.execute('ALTER TABLE pairs ADD COLUMN match_probability REAL')
     for col in ('uid', 'email', 'phone', 'zip_name', 'zip_street', 'city_name', 'name_head'):
         db.execute(f'CREATE INDEX IF NOT EXISTS idx_block_{col} ON records(project_id,side,{col})')
+    from migration import ensure_schema
+    ensure_schema(db)
     db.commit()
     return db
 
 
-def import_project(db, title, frame_a, map_a, frame_b, map_b, engine='rapidfuzz'):
+def import_project(db, title, frame_a, map_a, frame_b, map_b, engine='rapidfuzz',
+                   mode='legacy', a_ref_column='', a_exclude_column='',
+                   exclude_values=(), empty_reference_markers=()):
     if engine not in ('rapidfuzz','splink5'):
         raise ValueError('Unbekannte Matching-Engine')
+    if mode not in ('legacy','dual'):
+        raise ValueError('Ungültiger Abgleichmodus')
+    if mode == 'dual' and (not a_ref_column or a_ref_column not in frame_a.columns):
+        raise ValueError('Für die zwei CRM-Workflows muss die B-Referenzspalte aus A zugeordnet werden.')
+    if a_exclude_column and a_exclude_column not in frame_a.columns:
+        raise ValueError('Die ausgewählte Ausschlussspalte existiert nicht in CRM A.')
     validate_mapping(frame_a, map_a, 'A')
     validate_mapping(frame_b, map_b, 'B')
     # IDs niemals numerisch umwandeln: 000123 bleibt 000123.
     with db:
-        cur = db.execute('INSERT INTO projects(title,created_at,a_count,b_count,engine) VALUES(?,?,?,?,?)',
-                         (title[:140].strip() or 'CRM-Abgleich', now(), len(frame_a), len(frame_b), engine))
+        cur = db.execute('INSERT INTO projects(title,created_at,a_count,b_count,engine,mode,ref_column) VALUES(?,?,?,?,?,?,?)',
+                         (title[:140].strip() or 'CRM-Abgleich', now(), len(frame_a), len(frame_b), engine,mode,a_ref_column))
         pid = cur.lastrowid
+        markers = {plain(v).casefold() for v in empty_reference_markers if plain(v)}
+        exclusions = {plain(v).casefold() for v in exclude_values if plain(v)}
         for side, frame, mapping in [('A', frame_a, map_a), ('B', frame_b, map_b)]:
             batch = []
             for vals in frame.itertuples(index=False, name=None):
                 original = {str(col): plain(val) for col, val in zip(frame.columns, vals)}
                 raw = {field: plain(original.get(mapping[field])) if mapping.get(field) else '' for field in FIELDS}
                 n = to_record(raw)
+                b_ref = plain(original.get(a_ref_column,'')) if side=='A' and mode=='dual' else ''
+                if b_ref.casefold() in markers:
+                    b_ref = ''
+                in_scope = int(not (side=='A' and a_exclude_column and
+                                    plain(original.get(a_exclude_column,'')).casefold() in exclusions))
                 batch.append((pid,side,raw['id'],json.dumps(raw,ensure_ascii=False),
                               json.dumps(original,ensure_ascii=False), n['name'],n['street'],n['postal'],n['city'],n['email'],n['phone'],
                               n['uid'],n['zip_name'],n['zip_street'],n['city_name'],n['name_head'],
-                              n['street_number'], n['street_name'], n['house_number'], n['address_conflict']))
+                              n['street_number'], n['street_name'], n['house_number'], n['address_conflict'], b_ref, in_scope))
                 if len(batch) >= 1000:
                     db.executemany('''INSERT INTO records(project_id,side,source_id,original_json,
                         source_json,name,street,postal,city,email,phone,uid,zip_name,zip_street,city_name,
-                        name_head,street_number,street_name,house_number,address_conflict) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
+                        name_head,street_number,street_name,house_number,address_conflict,b_reference,in_scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
                     batch = []
             if batch:
                 db.executemany('''INSERT INTO records(project_id,side,source_id,original_json,
                     source_json,name,street,postal,city,email,phone,uid,zip_name,zip_street,city_name,
-                    name_head,street_number,street_name,house_number,address_conflict) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
+                    name_head,street_number,street_name,house_number,address_conflict,b_reference,in_scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
     return pid
 
 
@@ -380,7 +397,9 @@ def run_matching(db, pid, minimum=60, max_candidates=400_000, progress=None):
             side_maps = {}
             for side in ('A','B'):
                 mapping = {}
-                for row in db.execute(f"SELECT pk,{field} FROM records WHERE project_id=? AND side=? AND {field} != ''", (pid,side)):
+                dual = db.execute('SELECT mode FROM projects WHERE project_id=?', (pid,)).fetchone()['mode'] == 'dual'
+                restriction = " AND b_reference='' AND in_scope=1" if side=='A' and dual else ''
+                for row in db.execute(f"SELECT pk,{field} FROM records WHERE project_id=? AND side=? AND {field} != ''"+restriction, (pid,side)):
                     mapping.setdefault(row[field], []).append(row['pk'])
                 side_maps[side] = mapping
             a_map,b_map = side_maps['A'],side_maps['B']
@@ -460,6 +479,9 @@ def set_review(db,pid,a_pk,b_pk,state):
         raise ValueError('Ungueltiger Pruefstatus')
     with db:
         if state=='bestaetigt':
+            from migration import is_dual, reference_conflict
+            if is_dual(db,pid) and reference_conflict(db,pid,a_pk,b_pk):
+                raise ValueError('Konflikt: Diese B-ID ist bereits als Referenz bei einer anderen A-Adresse hinterlegt.')
             clash = db.execute('''SELECT a_pk,b_pk FROM pairs WHERE project_id=? AND state='bestaetigt'
                   AND (a_pk=? OR b_pk=?) AND NOT (a_pk=? AND b_pk=?) LIMIT 1''',
                   (pid,a_pk,b_pk,a_pk,b_pk)).fetchone()

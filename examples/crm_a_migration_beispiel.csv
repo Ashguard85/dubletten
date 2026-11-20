@@ -1,0 +1,5 @@
+id;firma;strasse;plz;ort;b_referenz;migrieren
+A-001;Müller Informatik AG;Bahnhofstrasse 12;6003;Luzern;B-101;Ja
+A-002;Meier Elektro GmbH;Hauptstrasse 14;6048;Horw;;Ja
+A-003;Musterfirma AG;Seestrasse 12a;6006;Luzern;B-999;Ja
+A-004;Historischer Kunde;Unbekanntweg 5;8000;Zürich;;Nein

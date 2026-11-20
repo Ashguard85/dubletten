@@ -1,0 +1,21 @@
+CRM Dubletten Lokal v1.7
+========================
+
+Full source package based on provided CRM-Dubletten-v1.6-komplett.zip.
+No real CRM data, passwords, Ollama models or national swisstopo dataset included.
+
+New source modules:
+  app/migration.py           2 A->B workflows, reference validation, status/export
+  app/swisstopo.py           offline import/validation of public Swiss address CSV/ZIP
+  app/swisstopo_cli.py       local snapshot CLI
+  scripts/download-swisstopo-public.py  optional public-only downloader
+
+Modified source:
+  app/engine.py, app/splink_matcher.py, app/ui.py
+
+New docs and test fixtures:
+  UPDATE-1.7.md, VERIFY-1.7.md, CHANGELOG-1.7.md
+  examples/*_migration_beispiel.csv, examples/swisstopo_NUR_TESTDATEN.csv
+  tests/test_migration_v17.py
+
+Portainer build configuration unchanged from v1.6.

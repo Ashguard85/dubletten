@@ -28,9 +28,11 @@ def _load(db, project_id):
     """Keep source PK intact; only normalised matching columns enter Splink."""
     result = {}
     for side in ('A', 'B'):
+        from migration import is_dual
+        extra = " AND b_reference='' AND in_scope=1" if side=='A' and is_dual(db,project_id) else ''
         rows = db.execute('''SELECT pk, original_json, name,street,postal,city,uid,email,phone,
                               zip_name,zip_street,city_name,name_head,street_number,street_name,house_number
-                              FROM records WHERE project_id=? AND side=?''', (project_id, side))
+                              FROM records WHERE project_id=? AND side=?'''+extra, (project_id, side))
         data = []
         for row in rows:
             obj = {k: row[k] for k in COLUMNS if k != 'unique_id'}
@@ -276,6 +278,13 @@ def run_splink_matching(db, project_id, minimum_probability=0.05,
     frames = _load(db, project_id)
     n_a, n_b = len(frames['A']), len(frames['B'])
     if not n_a or not n_b:
+        from migration import is_dual
+        if is_dual(db,project_id) and n_a==0:
+            with db:
+                db.execute('DELETE FROM pairs WHERE project_id=?',(project_id,))
+                db.execute('UPDATE projects SET candidate_count=0,match_model_info=? WHERE project_id=?',
+                           (json.dumps({'engine':'splink5','mode':'keine_A_ohne_referenz'}),project_id))
+            return 0,0
         raise ValueError('Beide CRM-Datenquellen müssen Datensätze enthalten.')
     upper, block_stats = _cap_block_fanout(frames, max_candidates, cfg['blocking_fields'])
     if upper == 0:
