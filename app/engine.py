@@ -173,7 +173,8 @@ def connect(db_path):
     db.executescript('''
     CREATE TABLE IF NOT EXISTS projects (
         project_id INTEGER PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL,
-        a_count INTEGER NOT NULL, b_count INTEGER NOT NULL, candidate_count INTEGER NOT NULL DEFAULT 0
+        a_count INTEGER NOT NULL, b_count INTEGER NOT NULL, candidate_count INTEGER NOT NULL DEFAULT 0,
+        engine TEXT NOT NULL DEFAULT 'rapidfuzz', match_model_info TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS records (
         pk INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
@@ -194,25 +195,37 @@ def connect(db_path):
         state TEXT NOT NULL DEFAULT 'offen',
         llm_decision TEXT NOT NULL DEFAULT '', llm_reason TEXT NOT NULL DEFAULT '',
         llm_model TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
+        match_probability REAL,
         PRIMARY KEY(project_id,a_pk,b_pk)
     );
     CREATE INDEX IF NOT EXISTS idx_records_project_side ON records(project_id,side);
     CREATE INDEX IF NOT EXISTS idx_pairs_project_score ON pairs(project_id,score DESC);
     CREATE INDEX IF NOT EXISTS idx_pairs_state ON pairs(project_id,state);
     ''')
+    # Safe schema migration for existing persistent SQLite databases.
+    project_columns = {r['name'] for r in db.execute('PRAGMA table_info(projects)')}
+    if 'engine' not in project_columns:
+        db.execute("ALTER TABLE projects ADD COLUMN engine TEXT NOT NULL DEFAULT 'rapidfuzz'")
+    if 'match_model_info' not in project_columns:
+        db.execute("ALTER TABLE projects ADD COLUMN match_model_info TEXT NOT NULL DEFAULT ''")
+    pair_columns = {r['name'] for r in db.execute('PRAGMA table_info(pairs)')}
+    if 'match_probability' not in pair_columns:
+        db.execute('ALTER TABLE pairs ADD COLUMN match_probability REAL')
     for col in ('uid', 'email', 'phone', 'zip_name', 'zip_street', 'city_name', 'name_head'):
         db.execute(f'CREATE INDEX IF NOT EXISTS idx_block_{col} ON records(project_id,side,{col})')
     db.commit()
     return db
 
 
-def import_project(db, title, frame_a, map_a, frame_b, map_b):
+def import_project(db, title, frame_a, map_a, frame_b, map_b, engine='rapidfuzz'):
+    if engine not in ('rapidfuzz','splink5'):
+        raise ValueError('Unbekannte Matching-Engine')
     validate_mapping(frame_a, map_a, 'A')
     validate_mapping(frame_b, map_b, 'B')
     # IDs niemals numerisch umwandeln: 000123 bleibt 000123.
     with db:
-        cur = db.execute('INSERT INTO projects(title,created_at,a_count,b_count) VALUES(?,?,?,?)',
-                         (title[:140].strip() or 'CRM-Abgleich', now(), len(frame_a), len(frame_b)))
+        cur = db.execute('INSERT INTO projects(title,created_at,a_count,b_count,engine) VALUES(?,?,?,?,?)',
+                         (title[:140].strip() or 'CRM-Abgleich', now(), len(frame_a), len(frame_b), engine))
         pid = cur.lastrowid
         for side, frame, mapping in [('A', frame_a, map_a), ('B', frame_b, map_b)]:
             batch = []
@@ -403,11 +416,13 @@ def save_llm(db,pid,a_pk,b_pk,decision,reason,model):
 
 def export_pairs(db,pid,accepted_only=False):
     sql = '''SELECT a.source_id crm_a_id, b.source_id crm_b_id,
-             p.score aehnlichkeit_heuristik_0_100, p.state pruefentscheid,
+             p.score vergleichswert_0_100, p.match_probability splink_match_probability,
+             pr.engine matching_engine, p.state pruefentscheid,
              p.reason gruende, p.llm_decision ki_vorschlag,
              p.llm_reason ki_begruendung, p.llm_model ki_modell,
              p.updated_at bearbeitet_am
              FROM pairs p JOIN records a ON a.pk=p.a_pk JOIN records b ON b.pk=p.b_pk
+             JOIN projects pr ON pr.project_id=p.project_id
              WHERE p.project_id=?'''
     if accepted_only:
         sql += " AND p.state='bestaetigt'"

@@ -11,6 +11,7 @@ from engine import (FIELDS, LABELS, best_guess, connect, delete_project,
                     export_pairs, export_unmatched, import_project,
                     list_projects, page_pairs, project_stats, read_upload,
                     run_matching, save_llm, set_review)
+from splink_matcher import run_splink_matching
 from llm import MODEL, assess, models
 
 st.set_page_config(page_title=os.environ.get('APP_TITLE', 'CRM Dubletten – lokal'), page_icon='🔎',
@@ -39,7 +40,7 @@ DB_PATH = os.environ.get('DB_PATH','/app/data/crm.sqlite')
 db = connect(DB_PATH)
 
 st.title('🔎 CRM-Dublettenprüfung')
-st.caption('Zwei CRM-Datenbestände lokal vergleichen • Kandidaten prüfen • ID-Zuordnung exportieren')
+st.caption('Zwei CRM-Datenbestände lokal vergleichen • RapidFuzz oder Splink 5 • manuelle Prüfung • ID-Export')
 st.info('🔒 CRM-Daten bleiben auf diesem Server. Die optionale KI verwendet nur das konfigurierte lokale Host-Ollama. Keine Cloud-API in der Anwendung.')
 
 with st.sidebar:
@@ -100,22 +101,38 @@ if pid is None:
             st.stop()
         st.subheader('2 · Felder zuordnen')
         st.caption('Felder dürfen in CRM A und CRM B unterschiedlich heissen. Firma ODER Vor-/Nachname reicht für Namensvergleich.')
+        # Outside the form so users can see the correct threshold controls
+        # immediately after selecting a matching engine.
+        engine_label = st.radio('Matching-Verfahren',
+             ['Splink 5 (statistisches Record Linkage)', 'RapidFuzz (bisherige Regeln)'],
+             horizontal=True, help='Splink 5 trainiert statistische Parameter ab ausreichend grossen Datenmengen. Kleine Testmengen nutzen offen gekennzeichnete Startparameter.')
+        engine = 'splink5' if engine_label.startswith('Splink') else 'rapidfuzz'
         with st.form('mapping_form'):
             title = st.text_input('Projektname',value=f'CRM-Abgleich {datetime.now():%Y-%m-%d}')
             ca,cb = st.columns(2)
             with ca: mapping_a = map_form(frame_a,'A')
             with cb: mapping_b = map_form(frame_b,'B')
-            min_score = st.slider('Mindestwert für angezeigte Kandidaten (heuristisch, nicht probabilistisch)',
-                                  45,95,60,5)
+            if engine == 'splink5':
+                min_probability = st.slider('Minimale Splink-Matchwahrscheinlichkeit (nur Kandidatenfilter)',
+                                            0.01, 0.99, 0.05, 0.01,
+                                            help='0.05 ist ein bewusst niedriger Prüf-Schwellwert. Es ist keine automatische Freigabe.')
+                st.caption('Splink 5 vergleicht nur CRM A mit CRM B. Die angezeigte Wahrscheinlichkeit ist modellabhängig und nicht unabhängig kalibriert.')
+            else:
+                min_score = st.slider('Mindestwert für Kandidaten (RapidFuzz, heuristisch)',
+                                      45,95,60,5)
             submitted = st.form_submit_button('Importieren und Abgleich starten',type='primary')
         if submitted:
             try:
                 with st.spinner('Importiere und vergleiche die Daten lokal …'):
-                    project_id = import_project(db,title,frame_a,mapping_a,frame_b,mapping_b)
+                    project_id = import_project(db,title,frame_a,mapping_a,frame_b,mapping_b,engine=engine)
                     box = st.empty()
                     try:
-                        paircount, kept = run_matching(db,project_id,minimum=min_score,
-                                                        progress=lambda message: box.caption(message))
+                        if engine == 'splink5':
+                            paircount, kept = run_splink_matching(db,project_id,
+                                minimum_probability=min_probability, progress=lambda message: box.caption(message))
+                        else:
+                            paircount, kept = run_matching(db,project_id,minimum=min_score,
+                                                            progress=lambda message: box.caption(message))
                     except Exception:
                         delete_project(db,project_id)
                         raise
@@ -131,7 +148,19 @@ if pid is None:
 
 stats = project_stats(db,pid)
 st.subheader(stats['title'])
-st.caption(f"Erstellt am {stats['created_at'][:10]} · Projekt #{pid}")
+is_splink = stats['engine'] == 'splink5'
+st.caption(f"Erstellt am {stats['created_at'][:10]} · Projekt #{pid} · Engine: {'Splink 5' if is_splink else 'RapidFuzz'}")
+if is_splink:
+    try:
+        model_info = json.loads(stats.get('match_model_info') or '{}')
+    except (ValueError, TypeError):
+        model_info = {}
+    if model_info.get('mode') == 'u_sampling_em_training':
+        st.info('Splink 5: Modellparameter via Zufallsstichprobe (u) und EM (m) geschätzt. Werte sind **keine unabhängig validierten Genauigkeitsangaben**.')
+    elif model_info.get('mode') == 'feste_priors_kleine_stichprobe':
+        st.warning('Splink 5: Zu kleine Vergleichsmenge für EM-Training. Verwendet feste Beispielparameter; Wahrscheinlichkeitswerte **nicht kalibriert**. Nur zum Funktionstest.')
+    else:
+        st.caption('Splink 5: ' + str(model_info.get('mode', 'Modellstatus nicht vorhanden')))
 a,b,c,d = st.columns(4)
 a.metric('Datensätze CRM A',f"{stats['a_count']:,}")
 b.metric('Datensätze CRM B',f"{stats['b_count']:,}")
@@ -147,18 +176,26 @@ with review:
                              format_func=lambda s: {'offen':'Offen','unklar':'Unklar',
                                  'bestaetigt':'Bestätigt','abgelehnt':'Abgelehnt'}.get(s,s))
     with score_c:
-        minimum = st.slider('Mindest-Score',0,100,60,5)
+        minimum = st.slider('Mindest-Score',0,100,5 if is_splink else 60,5)
     count,_ = page_pairs(db,pid,state=state,min_score=minimum,limit=1)
-    st.caption(f'{count:,} Einträge mit diesem Filter · Score ist eine Heuristik, keine Trefferwahrscheinlichkeit')
+    st.caption(f'{count:,} Einträge mit diesem Filter · ' + ('Score = 100 × modellbasierte Splink-Matchwahrscheinlichkeit (keine validierte Trefferquote)' if is_splink else 'Score ist eine RapidFuzz-Heuristik, keine Trefferwahrscheinlichkeit'))
     if installed:
         with st.expander('🤖 Optional: Grenzfälle stapelweise durch lokale KI vorprüfen'):
-            st.caption('Nur offene Kandidaten mit Score 65–87 und ohne KI-Vorschlag. Keine automatische Freigabe!')
+            st.caption('Nur offene Kandidaten im gewählten Score-Bereich und ohne KI-Vorschlag. Keine automatische Freigabe!')
+            k_lo,k_hi = st.columns(2)
+            with k_lo:
+                llm_min = st.number_input('KI-Score von', 0, 100, 40 if is_splink else 65, 1)
+            with k_hi:
+                llm_max = st.number_input('KI-Score bis', 0, 100, 95 if is_splink else 87, 1)
             batch_size = st.slider('Maximale Anzahl',1,25,10,1)
             if st.button('Lokale KI-Vorprüfung starten',key=f'batch_llm_{pid}'):
+                if llm_min > llm_max:
+                    st.error('KI-Score von darf nicht grösser als KI-Score bis sein.')
+                    st.stop()
                 jobs = db.execute('''SELECT p.a_pk,p.b_pk,a.original_json aj,b.original_json bj
                    FROM pairs p JOIN records a ON a.pk=p.a_pk JOIN records b ON b.pk=p.b_pk
-                   WHERE p.project_id=? AND p.state='offen' AND p.score BETWEEN 65 AND 87
-                     AND p.llm_decision='' ORDER BY ABS(p.score-76) LIMIT ?''',(pid,batch_size)).fetchall()
+                   WHERE p.project_id=? AND p.state='offen' AND p.score BETWEEN ? AND ?
+                     AND p.llm_decision='' ORDER BY p.score DESC LIMIT ?''',(pid,llm_min,llm_max,batch_size)).fetchall()
                 if not jobs:
                     st.info('Keine passenden offenen Grenzfälle ohne KI-Vorschlag vorhanden.')
                 else:
@@ -179,13 +216,15 @@ with review:
         _, items = page_pairs(db,pid,state=state,min_score=minimum,offset=(page-1)*20,limit=20)
         for pair in items:
             ra=json.loads(pair['a_json']); rb=json.loads(pair['b_json'])
-            title=f"{pair['score']:3d}/100 · {ra.get('company') or (ra.get('first_name','')+' '+ra.get('last_name','')).strip()} ↔ {rb.get('company') or (rb.get('first_name','')+' '+rb.get('last_name','')).strip()} · {pair['state']}"
+            title=f"{pair['score']:3d}/100 {'(Splink)' if is_splink else '(RapidFuzz)'} · {ra.get('company') or (ra.get('first_name','')+' '+ra.get('last_name','')).strip()} ↔ {rb.get('company') or (rb.get('first_name','')+' '+rb.get('last_name','')).strip()} · {pair['state']}"
             with st.expander(title):
                 l,r=st.columns(2)
                 for col,raw,source in [(l,ra,'A'),(r,rb,'B')]:
                     with col:
                         st.markdown(f'**CRM {source} · ID `{pair[source.lower()+"_id"]}`**')
                         st.table([{'Feld':LABELS[f], 'Wert':raw.get(f,'')} for f in FIELDS if f != 'id' and raw.get(f)])
+                if is_splink and pair['match_probability'] is not None:
+                    st.caption(f"**Splink-Modellwert:** {pair['match_probability']:.5f} · nur zur Priorisierung, keine Garantie")
                 st.caption(f"**Erkannte Merkmale:** {pair['reason']}")
                 if pair['llm_decision']:
                     st.info(f"Lokale KI: **{pair['llm_decision']}** · {pair['llm_reason']} ({pair['llm_model']})")
@@ -213,7 +252,7 @@ with review:
 
 with exports:
     st.markdown('### Export für die CRM-Migration')
-    st.warning('Nur **manuell bestätigte** Paare gehören in die Freigabeliste. Jeder Originaldatensatz kann höchstens einmal bestätigt werden.')
+    st.warning('Nur **manuell bestätigte** Paare gehören in die Freigabeliste. Jeder Originaldatensatz kann höchstens einmal bestätigt werden. Ein hoher Splink-Score ist kein Identitätsbeweis.')
     st.download_button('⬇️ Bestätigte ID-Zuordnungen (.csv)',export_pairs(db,pid,True),
                        file_name=f'crm_{pid}_freigegebene_zuordnungen.csv',mime='text/csv',type='primary')
     st.download_button('⬇️ Alle Kandidaten inkl. Prüfstatus (.csv)',export_pairs(db,pid,False),

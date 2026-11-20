@@ -2,7 +2,7 @@
 # VOR dem Deployment: Repository URL erstellen/anpassen und Quellcode hochladen.
 # Keine CRM-Exporte in Git ablegen!
 x-app-build: &app-build
-  context: https://github.com/Ashguard85/CRM-Dubletten-Lokal.git#main
+  context: https://github.com/Ashguard85/dubletten.git#main
 
 x-app-environment: &app-environment
   APP_TITLE: "CRM Dubletten Lokal"
@@ -53,7 +53,7 @@ services:
       homepage.group: "CRM"
       homepage.name: "CRM Dubletten"
       homepage.href: "${APP_PUBLIC_URL:-http://127.0.0.1:8191}"
-      homepage.description: "Lokale CRM-Dublettenprüfung mit Ollama"
+      homepage.description: "Lokale CRM-Dublettenprüfung mit Splink 5 und Ollama"
       homepage.showStats: "true"
 
 networks:

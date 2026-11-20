@@ -46,7 +46,7 @@ services:
       homepage.group: "CRM"
       homepage.name: "CRM Dubletten"
       homepage.href: "${APP_PUBLIC_URL:-http://127.0.0.1:8191}"
-      homepage.description: "Lokale CRM-Dublettenprüfung mit Ollama"
+      homepage.description: "Lokale CRM-Dublettenprüfung mit Splink 5 und Ollama"
       homepage.showStats: "true"
 
 networks:
