@@ -4,7 +4,6 @@ import hmac
 from pathlib import Path
 import os
 from datetime import datetime
-from pathlib import Path
 
 import streamlit as st
 
@@ -15,6 +14,7 @@ from engine import (FIELDS, LABELS, best_guess, connect, delete_project,
 from splink_matcher import run_splink_matching, available_models, train_model_from_reviews
 from llm import MODEL, assess, models
 from match_config import validate_config, BLOCK_LIMITS, model_signature
+from review_ui import render_review
 
 st.set_page_config(page_title=os.environ.get('APP_TITLE', 'CRM Dubletten – lokal'), page_icon='🔎',
                    layout='wide', initial_sidebar_state='expanded')
@@ -42,7 +42,7 @@ DB_PATH = os.environ.get('DB_PATH','/app/data/crm.sqlite')
 db = connect(DB_PATH)
 
 st.title('🔎 CRM-Dublettenprüfung')
-st.caption('CRM A ↔ CRM B · RapidFuzz / Splink 5 · getrennte Hausnummer · Training · Ollama · ID-Export')
+st.caption('GUI v1.6 · CRM A ↔ CRM B · RapidFuzz / Splink 5 · Hausnummern · Training · Ollama · ID-Export')
 st.info('🔒 CRM-Daten bleiben auf diesem Server. Die optionale KI verwendet nur das konfigurierte lokale Host-Ollama. Keine Cloud-API in der Anwendung.')
 
 with st.sidebar:
@@ -226,139 +226,7 @@ d.metric('Bestätigte Zuordnungen',stats['accepted'])
 review, training_tab, exports, manage = st.tabs(['✅ Prüfen', '🧠 Splink-Training', '📥 Exporte', '⚙️ Verwaltung'])
 
 with review:
-    st.markdown('### Treffer vergleichen')
-    filter_c,score_c = st.columns(2)
-    with filter_c:
-        state = st.selectbox('Prüfstatus',['offen','unklar','bestaetigt','abgelehnt','Alle'],
-                             format_func=lambda s: {'offen':'Offen','unklar':'Unklar',
-                                 'bestaetigt':'Bestätigt','abgelehnt':'Abgelehnt'}.get(s,s))
-    with score_c:
-        minimum = st.slider('Mindest-Score',0,100,5 if is_splink else 60,5)
-    count,_ = page_pairs(db,pid,state=state,min_score=minimum,limit=1)
-    st.caption(f'{count:,} Einträge mit diesem Filter · ' + ('Score = 100 × modellbasierte Splink-Matchwahrscheinlichkeit (keine validierte Trefferquote)' if is_splink else 'Score ist eine RapidFuzz-Heuristik, keine Trefferwahrscheinlichkeit'))
-    if installed:
-        with st.expander('🤖 Optional: Grenzfälle stapelweise durch lokale KI vorprüfen'):
-            st.caption('Nur offene Kandidaten im gewählten Score-Bereich und ohne KI-Vorschlag. Keine automatische Freigabe!')
-            k_lo,k_hi = st.columns(2)
-            with k_lo:
-                llm_min = st.number_input('KI-Score von', 0, 100, 40 if is_splink else 65, 1)
-            with k_hi:
-                llm_max = st.number_input('KI-Score bis', 0, 100, 95 if is_splink else 87, 1)
-            batch_size = st.slider('Maximale Anzahl',1,25,10,1)
-            if st.button('Lokale KI-Vorprüfung starten',key=f'batch_llm_{pid}'):
-                if llm_min > llm_max:
-                    st.error('KI-Score von darf nicht grösser als KI-Score bis sein.')
-                    st.stop()
-                jobs = db.execute('''SELECT p.a_pk,p.b_pk,a.original_json aj,b.original_json bj
-                   FROM pairs p JOIN records a ON a.pk=p.a_pk JOIN records b ON b.pk=p.b_pk
-                   WHERE p.project_id=? AND p.state='offen' AND p.score BETWEEN ? AND ?
-                     AND p.llm_decision='' ORDER BY p.score DESC LIMIT ?''',(pid,llm_min,llm_max,batch_size)).fetchall()
-                if not jobs:
-                    st.info('Keine passenden offenen Grenzfälle ohne KI-Vorschlag vorhanden.')
-                else:
-                    bar = st.progress(0.0)
-                    for i,job in enumerate(jobs):
-                        try:
-                            decision,why = assess(json.loads(job['aj']),json.loads(job['bj']),selected_model)
-                            save_llm(db,pid,job['a_pk'],job['b_pk'],decision,why,selected_model)
-                            bar.progress((i+1)/len(jobs))
-                        except Exception as exc:
-                            st.error(f'Nach {i} erfolgreichen Auswertungen abgebrochen: {exc}')
-                            break
-                    else:
-                        st.success(f'{len(jobs)} Vorschläge gespeichert. Bitte manuell prüfen.')
-    if count:
-        pages = (count + 19) // 20
-        page = st.number_input('Seite', min_value=1, max_value=pages, value=1, step=1,
-                               key=f'review_page_{pid}_{state}_{minimum}')
-        _, items = page_pairs(db, pid, state=state, min_score=minimum,
-                              offset=(page-1)*20, limit=20)
-        if items:
-            # Nur ein Paar gleichzeitig anzeigen: keine langen, verschachtelten
-            # st.expander-Karten mit potentiell abgeschnittenem Inhalt.
-            def pair_label(index):
-                row = items[index]
-                left = json.loads(row['a_json'])
-                right = json.loads(row['b_json'])
-                name_a = left.get('company') or (left.get('first_name','') + ' ' + left.get('last_name','')).strip()
-                name_b = right.get('company') or (right.get('first_name','') + ' ' + right.get('last_name','')).strip()
-                engine_label = 'Splink' if is_splink else 'RapidFuzz'
-                return f"{index+1}. {row['score']:3d}/100 ({engine_label}) · {name_a} ↔ {name_b} · {row['state']}"
-
-            selection_key = f'review_pair_{pid}_{state}_{minimum}_{page}'
-            # Nach Bestätigen/Ablehnen kann die Liste kürzer werden.
-            if selection_key in st.session_state and st.session_state[selection_key] not in range(len(items)):
-                del st.session_state[selection_key]
-            chosen = st.selectbox('Treffer auswählen (Details darunter)',
-                                  options=list(range(len(items))),
-                                  format_func=pair_label, key=selection_key)
-
-            def move_selection(delta):
-                old = st.session_state.get(selection_key, 0)
-                st.session_state[selection_key] = max(0, min(len(items)-1, old+delta))
-
-            nav_left, nav_middle, nav_right = st.columns([1, 2, 1])
-            with nav_left:
-                st.button('← Vorheriger Treffer', key=f'previous_{selection_key}',
-                          disabled=chosen == 0, on_click=move_selection, args=(-1,),
-                          use_container_width=True)
-            with nav_middle:
-                st.caption(f'Treffer {chosen+1} von {len(items)} auf Seite {page} / {pages} · Nur ein Paar wird gleichzeitig angezeigt')
-            with nav_right:
-                st.button('Nächster Treffer →', key=f'next_{selection_key}',
-                          disabled=chosen == len(items)-1, on_click=move_selection,
-                          args=(1,), use_container_width=True)
-
-            pair = items[chosen]
-            ra = json.loads(pair['a_json'])
-            rb = json.loads(pair['b_json'])
-            with st.container(border=True):
-                st.markdown('#### ' + pair_label(chosen))
-                left_col, right_col = st.columns(2)
-                for col, raw, source in ((left_col, ra, 'A'), (right_col, rb, 'B')):
-                    with col:
-                        st.markdown(f'**CRM {source} · ID `{pair[source.lower()+"_id"]}`**')
-                        st.table([{'Feld': LABELS[field], 'Wert': raw.get(field, '')}
-                                  for field in FIELDS if field != 'id' and raw.get(field)])
-                if is_splink and pair['match_probability'] is not None:
-                    st.caption(f"**Splink-Modellwert:** {pair['match_probability']:.5f} · nur zur Priorisierung, keine Garantie")
-                st.caption(f"**Erkannte Merkmale:** {pair['reason']}")
-
-                diagnosis_key = f'diagnosis_{pid}_{pair["a_pk"]}_{pair["b_pk"]}'
-                if st.checkbox('🔎 Feldweise Diagnose anzeigen', key=diagnosis_key):
-                    ra_norm = db.execute('SELECT * FROM records WHERE pk=?', (pair['a_pk'],)).fetchone()
-                    rb_norm = db.execute('SELECT * FROM records WHERE pk=?', (pair['b_pk'],)).fetchone()
-                    st.dataframe(comparison_diagnostics(ra_norm, rb_norm),
-                                 hide_index=True, use_container_width=True)
-                    if ra_norm['address_conflict'] or rb_norm['address_conflict']:
-                        st.warning('Hausnummer im CRM-Feld widerspricht möglicherweise der Strassenzeile. Originaldaten prüfen.')
-                    st.caption('Diese Diagnose verwendet normalisierte Feldwerte. Es sind keine Splink-Beitragsgewichte oder kausalen Erklärungen.')
-                if pair['llm_decision']:
-                    st.info(f"Lokale KI: **{pair['llm_decision']}** · {pair['llm_reason']} ({pair['llm_model']})")
-
-                k1, k2, k3, k4 = st.columns(4)
-                actions = (('bestaetigt', '✅ Bestätigen'), ('abgelehnt', '❌ Ablehnen'),
-                           ('unklar', '❓ Unklar'), ('offen', '↩️ Zurücksetzen'))
-                for col, (new_state, lab) in zip((k1, k2, k3, k4), actions):
-                    with col:
-                        if st.button(lab, key=f'{pid}_{pair["a_pk"]}_{pair["b_pk"]}_{new_state}',
-                                     use_container_width=True):
-                            try:
-                                set_review(db, pid, pair['a_pk'], pair['b_pk'], new_state)
-                                st.rerun()
-                            except ValueError as exc:
-                                st.error(str(exc))
-                if installed and st.button('🤖 Nur dieses Paar lokal mit Ollama prüfen',
-                                           key=f'llm_{pid}_{pair["a_pk"]}_{pair["b_pk"]}'):
-                    with st.spinner('Lokales LLM bewertet den Grenzfall …'):
-                        try:
-                            dec, why = assess(ra, rb, selected_model)
-                            save_llm(db, pid, pair['a_pk'], pair['b_pk'], dec, why, selected_model)
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f'KI-Prüfung nicht möglich: {exc}')
-    else:
-        st.write('Keine Treffer für diese Filterauswahl.')
+    render_review(db, pid, is_splink, selected_model, bool(installed))
 
 
 with training_tab:

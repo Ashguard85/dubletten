@@ -243,6 +243,7 @@ def connect(db_path):
     CREATE INDEX IF NOT EXISTS idx_records_project_side ON records(project_id,side);
     CREATE INDEX IF NOT EXISTS idx_pairs_project_score ON pairs(project_id,score DESC);
     CREATE INDEX IF NOT EXISTS idx_pairs_state ON pairs(project_id,state);
+    CREATE INDEX IF NOT EXISTS idx_pairs_project_b ON pairs(project_id,b_pk,a_pk);
     ''')
     # Safe schema migration for existing persistent SQLite databases.
     project_columns = {r['name'] for r in db.execute('PRAGMA table_info(projects)')}
