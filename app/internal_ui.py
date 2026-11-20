@@ -49,7 +49,7 @@ def render_create(db,mapping_form,splink_settings):
                 st.warning(f'Prüfprojekt #{pid} wurde erstellt. Du kannst es im Projektbereich löschen oder kontrollieren.')
 
 
-def render_project(db,pid,selected_model,installed,ai_enabled):
+def render_project(db,pid,selected_model,installed,ai_enabled,db_path):
     info=project_stats(db,pid)
     st.subheader(f"#{pid} · {info['title']} · Interne Dublettenprüfung")
     a,b,c=st.columns(3)
@@ -65,7 +65,7 @@ def render_project(db,pid,selected_model,installed,ai_enabled):
     tabs=st.tabs(['Kandidaten','Bestätigte Gruppen','Exporte','swisstopo','Verwaltung'])
     with tabs[0]:
         st.caption('Farben zeigen Feldabweichungen. Fachentscheide bestätigen nur das jeweilige Paar.')
-        render_review(db,pid,info['engine']=='splink5',selected_model,installed,ai_enabled=ai_enabled)
+        render_review(db_path,pid,info['engine']=='splink5',selected_model,installed,ai_enabled=ai_enabled)
     with tabs[1]:
         st.caption('Gruppen werden ausschliesslich aus **manuell bestätigten Paaren** gebildet. Ein indirekter Zusammenhang ist kein Nachweis, dass alle Gruppenmitglieder identisch sind.')
         groups=group_overview(db,pid)

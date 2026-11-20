@@ -8,9 +8,16 @@ from engine import set_review,save_llm,comparison_diagnostics
 from ai_control import is_enabled as ai_is_enabled
 from llm import assess
 from field_colors import CSS as CRM_COLOR_CSS, pair_rows, html_table
+from fragment_db import fragment_db
 
 @st.fragment
-def render_review(db,pid,is_splink=False,selected_model='',installed=False,ai_enabled=False):
+def render_review(db_path,pid,is_splink=False,selected_model='',installed=False,ai_enabled=False):
+ # The Streamlit fragment may rerun on another thread. Never use the parent DB.
+ with fragment_db(db_path) as db:
+  return _render_review_body(db,pid,is_splink,selected_model,installed,ai_enabled)
+
+
+def _render_review_body(db,pid,is_splink,selected_model,installed,ai_enabled):
  st.markdown(CRM_COLOR_CSS, unsafe_allow_html=True)
  internal=db.execute('SELECT mode FROM projects WHERE project_id=?',(pid,)).fetchone()['mode']=='internal'
  label_a,label_b=('Datensatz 1','Datensatz 2') if internal else ('CRM A','CRM B')

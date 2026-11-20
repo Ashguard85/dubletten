@@ -1,4 +1,4 @@
-"""Complete fresh-install Streamlit CRM address and migration auditing UI v1.8.7.
+"""Complete fresh-install Streamlit CRM address and migration auditing UI v1.8.7.1.
 
 All workflows local, no CRM writes, opt-in local Ollama, Swiss focus reviews.
 """
@@ -38,7 +38,8 @@ if not st.session_state.get('authenticated',False):
   else:st.error('Ungültiges Passwort.')
  st.stop()
 
-db=connect(os.environ.get('DB_PATH','/app/data/crm.sqlite'))
+db_path=os.environ.get('DB_PATH','/app/data/crm.sqlite')
+db=connect(db_path)
 ensure_sw(db);ensure_ai(db)
 
 # Apply navigation only before the sidebar widget is instantiated.
@@ -73,10 +74,10 @@ with st.sidebar:
 # Avoid tall dashboard headings during case-by-case review.
 if selected!='🎯 Fokusmodus':
  st.title('🔎 CRM-Dubletten Lokal')
- st.caption('GUI v1.8.7 · Interne Dubletten · Schweizer Adressprüfung · CRM A→B · RapidFuzz / Splink 5 · optionale KI')
+ st.caption('GUI v1.8.7.1 · Interne Dubletten · Schweizer Adressprüfung · CRM A→B · RapidFuzz / Splink 5 · optionale KI')
 
 if selected=='🎯 Fokusmodus':
- render_focus_workspace(db)
+ render_focus_workspace(db_path)
  st.stop()
 if selected=='📬 Schweizer Adressprüfung':
  render_addresses(db)
@@ -200,7 +201,7 @@ pid=labels.get(selected)
 if not pid:st.stop()
 info=project_stats(db,pid)
 if info.get('mode')=='internal':
- render_internal_project(db,pid,selected_model,bool(installed),enabled)
+ render_internal_project(db,pid,selected_model,bool(installed),enabled,db_path)
  st.stop()
 st.subheader(f"#{pid} · {info.get('title',selected)}")
 a,b,c,d=st.columns(4)
@@ -209,7 +210,7 @@ if st.button('🎯 Fokusmodus für diesen Arbeitsbereich starten',type='primary'
  st.session_state['_next_nav']='🎯 Fokusmodus';st.session_state['_focus_active']=True;st.rerun()
 
 tabs=st.tabs(['Kandidaten','B-Referenzen','Exporte','Splink-Training','swisstopo: CRM A','Verwaltung'])
-with tabs[0]:render_review(db,pid,info.get('engine')=='splink5',selected_model,bool(installed),ai_enabled=enabled)
+with tabs[0]:render_review(db_path,pid,info.get('engine')=='splink5',selected_model,bool(installed),ai_enabled=enabled)
 with tabs[1]:
  if not is_dual(db,pid):st.info('Nur im Modus A→B verfügbar.')
  else:

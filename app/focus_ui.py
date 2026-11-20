@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from field_colors import CSS as CRM_COLOR_CSS, pair_rows, reference_rows, html_table
+from fragment_db import fragment_db
 
 from focus_data import (
     REFERENCE_RESULTS, REFERENCE_DECISIONS,
@@ -230,7 +231,13 @@ def _mode_choices(db):
 
 
 @st.fragment
-def _render_focus(db):
+def _render_focus(db_path):
+    # Every focus fragment rerun gets a connection created in its own thread.
+    with fragment_db(db_path) as db:
+        return _render_focus_body(db)
+
+
+def _render_focus_body(db):
     projects, dual, jobs, internal = _mode_choices(db)
     available = []
     if projects:
@@ -444,7 +451,7 @@ def _render_focus(db):
         st.error(f'Bewertung fehlgeschlagen: {exc}')
 
 
-def render_focus_workspace(db):
+def render_focus_workspace(db_path):
     st.markdown(FOCUS_CSS + CRM_COLOR_CSS, unsafe_allow_html=True)
     if st.session_state.get('_focus_route_swiss'):
         if st.button('← Zurück zur Schweizer Adressprüfung', key='focus_exit_swiss', type='secondary'):
@@ -453,4 +460,4 @@ def render_focus_workspace(db):
             st.session_state['_next_nav'] = '📬 Schweizer Adressprüfung'
             st.rerun()
     st.markdown('**🎯 Fokusprüfung** · ein Fall nach dem anderen')
-    _render_focus(db)
+    _render_focus(db_path)
