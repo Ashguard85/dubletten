@@ -6,6 +6,7 @@ Every suggested correction is advisory until a user explicitly approves it.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import re
@@ -359,6 +360,115 @@ def save_review(db,job_id,row_pk,decision,corrected=None):
                    WHERE job_id=? AND row_pk=?''',(decision,json.dumps(cleaned,ensure_ascii=False),now(),basis,job_id,row_pk))
 
 
+
+MASS_APPROVED = 'massenfreigegeben'
+
+
+def _strict_official_rows(db, job_id):
+    """Yield unambiguous *exact* Swiss addresses from the pinned reference snapshot.
+
+    SQL preselects only current official records matching all four normalized
+    fields. Python additionally requires the original street/locality labels
+    to match the original input (case/whitespace/diacritics-insensitive only).
+    This is deliberately stricter than fuzzy matching and norm_street().
+    """
+    job = db.execute('SELECT job_id FROM address_jobs WHERE job_id=?', (job_id,)).fetchone()
+    if job is None:
+        raise ValueError('Prüfauftrag nicht gefunden.')
+    sql = """
+        SELECT r.row_pk, r.row_no, r.source_id, r.normalized_json,
+               COUNT(*) AS matches, MIN(s.egaid) AS egaid,
+               MIN(s.street_label) AS official_street,
+               MIN(s.city_label) AS official_city,
+               MIN(s.number_label) AS official_house,
+               MIN(s.adr_status) AS official_status,
+               MIN(s.official) AS official_flag
+        FROM address_job_rows r
+        JOIN address_jobs j ON j.job_id = r.job_id
+        JOIN swisstopo_addresses s ON s.snapshot_id=j.snapshot_id
+           AND s.postal=json_extract(r.normalized_json,'$.postal')
+           AND s.street=json_extract(r.normalized_json,'$.street')
+           AND s.house=json_extract(r.normalized_json,'$.house')
+           AND s.city=json_extract(r.normalized_json,'$.city')
+        WHERE r.job_id=? AND r.decision='offen'
+          AND r.result='amtlich_aktuell'
+          AND json_extract(r.normalized_json,'$.city') != ''
+          AND json_extract(r.normalized_json,'$.split_conflict')=0
+        GROUP BY r.row_pk
+        HAVING COUNT(*)=1 AND MIN(s.adr_status)='real' AND MIN(s.official)='1'
+        ORDER BY r.row_no
+    """
+    for rec in db.execute(sql, (job_id,)):
+        addr = json.loads(rec['normalized_json'])
+        if not all((addr.get('street_source'), addr.get('house'),
+                    addr.get('postal_source'), addr.get('city_source'))):
+            continue
+        if not all((rec['official_street'], rec['official_house'], rec['official_city'], rec['egaid'])):
+            # Snapshots imported before original labels were preserved are not eligible.
+            continue
+        if plain(addr.get('country')).casefold() not in ('', 'ch', 'che', 'schweiz',
+                                                        'suisse', 'svizzera', 'switzerland'):
+            continue
+        if norm(display_street_without_number(addr)) != norm(rec['official_street']):
+            continue
+        if norm_house_number(addr['house']) != norm_house_number(rec['official_house']):
+            continue
+        if not norm_house_number(addr['house']):
+            continue
+        if not re.fullmatch(r'\d{4}', addr['postal']):
+            continue
+        if norm(addr['city_source']) != norm(rec['official_city']):
+            continue
+        yield rec
+
+
+def bulk_approval_preview(db, job_id, sample_size=8):
+    """Preview eligibility, never write; never include fuzzy or ambiguous pairs."""
+    count = 0
+    digest = hashlib.sha256()
+    examples = []
+    for rec in _strict_official_rows(db, job_id):
+        digest.update(f"{rec['row_pk']}:{rec['egaid']}\n".encode('ascii'))
+        count += 1
+        if len(examples) < sample_size:
+            addr = json.loads(rec['normalized_json'])
+            examples.append({'ID': rec['source_id'], 'Zeile': rec['row_no'],
+                             'Strasse': display_street_without_number(addr),
+                             'Hausnummer': addr['house'], 'PLZ': addr['postal'],
+                             'Ort': addr['city_source'], 'EGAID': rec['egaid']})
+    return {'count': count, 'examples': examples, 'digest': digest.hexdigest()}
+
+
+def bulk_approve_exact(db, job_id, expected_count, expected_digest):
+    """Explicit, idempotent mass-approval. Recheck all criteria at commit time.
+
+    A changed preview (e.g. concurrent reviewer) cancels the whole operation.
+    Only the *decision* changes; immutable source fields remain untouched.
+    """
+    if type(expected_count) is not int or expected_count <= 0:
+        raise ValueError('Es ist keine freigabefähige Adresse ausgewählt.')
+    if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+        raise ValueError('Fehlender Prüfnachweis der Vorschau.')
+    with db:
+        db.execute('BEGIN IMMEDIATE')  # Lock candidate set for the full validation + update.
+        rows = list(_strict_official_rows(db, job_id))
+        digest = hashlib.sha256()
+        for rec in rows:
+            digest.update(f"{rec['row_pk']}:{rec['egaid']}\n".encode('ascii'))
+        if len(rows) != expected_count or digest.hexdigest() != expected_digest:
+            raise ValueError('Die Freigabeliste hat sich verändert. Bitte Vorschau neu laden.')
+        stamp = now()
+        changed_before = db.total_changes
+        db.executemany("""UPDATE address_job_rows
+            SET decision=?, correction_json='{}', correction_basis=?, reviewed_at=?
+            WHERE job_id=? AND row_pk=? AND decision='offen' AND result='amtlich_aktuell' """,
+            [(MASS_APPROVED, 'swisstopo_exakt_massengeprueft', stamp, job_id, r['row_pk'])
+             for r in rows])
+        changed = db.total_changes - changed_before
+        if changed != expected_count:
+            raise ValueError('Nicht alle Datensätze konnten freigegeben werden; keine Änderungen übernommen.')
+    return changed
+
 def delete_job(db,job_id):
     with db:
         db.execute('DELETE FROM address_jobs WHERE job_id=?',(job_id,))
@@ -373,11 +483,13 @@ def _safe_csv(val):
 
 
 def export_job(db,job_id,only_changed=False,split_house=False,
-               street_column='Ziel_Strasse',house_column='Ziel_Hausnummer'):
+               street_column='Ziel_Strasse',house_column='Ziel_Hausnummer',only_bulk=False):
     # CSV with immutable source and optional dedicated street/house target fields.
 
     # For unconfirmed rows these fields are only an unverified source parsing.
     # They are not a migration approval.
+    if only_changed and only_bulk:
+        raise ValueError('Nur einen Exportfilter gleichzeitig verwenden.')
     job=db.execute('SELECT * FROM address_jobs WHERE job_id=?',(job_id,)).fetchone()
     if not job:
         raise ValueError('Prüfauftrag nicht gefunden.')
@@ -397,8 +509,8 @@ def export_job(db,job_id,only_changed=False,split_house=False,
     writer=csv.writer(output,delimiter=';',lineterminator='\n')
     writer.writerow([*cols,*extra])
     cursor=db.execute('''SELECT * FROM address_job_rows WHERE job_id=?
-           '''+(' AND decision=?' if only_changed else '')+''' ORDER BY row_no''',
-           (job_id,'korrigiert') if only_changed else (job_id,))
+           '''+(' AND decision=?' if only_changed or only_bulk else '')+''' ORDER BY row_no''',
+           (job_id,'korrigiert' if only_changed else MASS_APPROVED) if (only_changed or only_bulk) else (job_id,))
     for row in cursor:
         orig=json.loads(row['original_json'])
         corrected=json.loads(row['correction_json']) if row['decision']=='korrigiert' else {}
@@ -410,6 +522,9 @@ def export_job(db,job_id,only_changed=False,split_house=False,
             addr=json.loads(row['normalized_json'])
             if corrected:
                 added=(corrected['strasse'],corrected['hausnummer'],'bestaetigte_korrektur')
+            elif row['decision']==MASS_APPROVED:
+                added=(display_street_without_number(addr),addr.get('house',''),
+                       'swisstopo_exakt_massengeprueft')
             else:
                 added=(display_street_without_number(addr),addr.get('house',''),
                        'aus_original_getrennt_ungeprueft' if addr.get('house') else 'hausnummer_nicht_erkannt')
