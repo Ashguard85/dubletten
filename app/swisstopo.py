@@ -1,7 +1,8 @@
 """Offline validation against a user-installed swisstopo building-address snapshot.
 
 No network calls. Only public reference CSV/ZIP is imported. No person lookup.
-Official data: STN_LABEL, ADR_NUMBER, ZIP_ZIP4, ZIP_NAME, ADR_STATUS, ADR_OFFICIAL.
+Official CSV: STN_LABEL, ADR_NUMBER, ZIP_LABEL, ADR_STATUS, ADR_OFFICIAL.
+Legacy separate ZIP_ZIP4 + ZIP_NAME columns are also supported.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ CSV_COLUMNS = {
     'street': ('STN_LABEL','STN_TEXT','STR_LABEL','STREET','STRASSE'),
     'number': ('ADR_NUMBER','HOUSE_NUMBER','HAUSNUMMER'),
     'postcode': ('ZIP_ZIP4','PLZ','POSTCODE','ZIP'),
-    'city': ('ZIP_NAME','ZIP_PLACE','ORT','CITY','ZIP_LABEL'),
+    'city': ('ZIP_NAME','ZIP_PLACE','ORT','CITY'),
     'status': ('ADR_STATUS',),
     'official': ('ADR_OFFICIAL',),
     'egaid': ('ADR_EGAID',),
@@ -93,43 +94,124 @@ def _get_postcode(value):
     return m.group(1) if m else ''
 
 
+class UnsupportedSwisstopoCSV(ValueError):
+    """The CSV exists, but is not a building-address directory."""
+
+
+def _valid_columns(cols):
+    cols = set(cols)
+    has_street = any(c in cols for c in CSV_COLUMNS['street'])
+    has_number = any(c in cols for c in CSV_COLUMNS['number'])
+    has_location = 'ZIP_LABEL' in cols or (
+        any(c in cols for c in CSV_COLUMNS['postcode'])
+        and any(c in cols for c in CSV_COLUMNS['city']))
+    return has_street and has_number and has_location
+
+
+def _postcode_cities(row):
+    """Yield all 4-digit postcode/locality combinations from the official ZIP_LABEL.
+
+    A ZIP_LABEL can contain '6003 Luzern, 6004 Luzern'. COM_NAME is the
+    *political municipality* and must not be used as the postal locality.
+    """
+    labelled = plain(row.get('ZIP_LABEL', ''))
+    if labelled:
+        pairs = []
+        for entry in labelled.split(',')[:32]:
+            entry = entry.strip()
+            match = re.fullmatch(r'(\d{4})\s+(.+)', entry)
+            if match:
+                postal, city = match.groups()
+                city = norm(city)
+                if city and (postal, city) not in pairs:
+                    pairs.append((postal, city))
+        if pairs:
+            return pairs
+    # Backwards-compatible support for a denormalized/hand-made CSV.
+    postal = _get_postcode(_extract(row, 'postcode'))
+    city = _extract(row, 'city')
+    if city and re.match(r'^\d{4}\s+', city):
+        city = re.sub(r'^\d{4}\s+', '', city)
+    return [(postal, norm(city))] if postal and city else []
+
+
 def _iter_csv(f, filename):
-    with io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace', newline='') as text:
-        head=text.readline()
+    # Streaming read: 400-MB CSVs are not loaded into RAM at once.
+    with io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace', newline='') as stream:
+        head = stream.readline()
         if not head:
             return
-        delimiter=';' if head.count(';') > head.count(',') else ','
-        reader=csv.DictReader(__import__('itertools').chain([head],text),delimiter=delimiter)
+        delimiter = ';' if head.count(';') > head.count(',') else ','
+        import itertools
+        reader = csv.DictReader(itertools.chain([head], stream), delimiter=delimiter)
         if not reader.fieldnames:
-            raise ValueError(f'{filename}: keine CSV-Spalten gefunden.')
-        # Strip any whitespace in column names; never infer wrong name silently.
-        reader.fieldnames=[plain(x).upper() for x in reader.fieldnames]
-        colset=set(reader.fieldnames)
-        if not all(any(c in colset for c in CSV_COLUMNS[fld]) for fld in ('street','number','postcode','city')):
-            raise ValueError(f'{filename}: keine gültigen swisstopo-Adressspalten. Benötigt STN_LABEL, ADR_NUMBER, ZIP_ZIP4, ZIP_NAME.')
+            raise UnsupportedSwisstopoCSV(f'{filename}: CSV-Kopfzeile nicht erkannt.')
+        reader.fieldnames = [plain(x).upper() for x in reader.fieldnames]
+        if not _valid_columns(reader.fieldnames):
+            raise UnsupportedSwisstopoCSV(
+                f'{filename}: kein Gebäudeadress-CSV. Erwartet STN_LABEL, ADR_NUMBER '
+                'und ZIP_LABEL (alternativ ZIP_ZIP4 + ZIP_NAME).')
         for raw in reader:
-            if not raw:
-                continue
-            yield raw
+            if raw:
+                yield raw
 
 
 def _members(path):
     if zipfile.is_zipfile(path):
         with zipfile.ZipFile(path) as archive:
-            names=[x for x in archive.infolist() if not x.is_dir() and x.filename.lower().endswith('.csv')
-                   and not x.filename.startswith('__MACOSX/')]
-            if not names:
-                raise ValueError('ZIP enthält keine CSV-Dateien.')
-            for member in names:
+            members = [x for x in archive.infolist()
+                       if not x.is_dir() and x.filename.lower().endswith('.csv')
+                       and not x.filename.startswith('__MACOSX/')]
+            if not members:
+                raise ValueError('ZIP enthält keine CSV-Datei.')
+            if sum(x.file_size for x in members) > 3 * 1024**3:
+                raise ValueError('ZIP enthält insgesamt zu viel unkomprimierte CSV-Daten (>3 GB).')
+            recognized = 0
+            for member in members:
                 if member.file_size > 3 * 1024**3:
-                    raise ValueError('CSV-Eintrag zu gross.')
+                    raise ValueError('Ein CSV-Eintrag im ZIP ist zu gross.')
                 with archive.open(member) as data:
-                    yield from _iter_csv(data,member.filename)
-    elif path.suffix.lower()=='.csv':
+                    try:
+                        # Skip unrelated CSV attachments; never extract ZIP to disk.
+                        for row in _iter_csv(data, member.filename):
+                            recognized += 1
+                            yield row
+                    except UnsupportedSwisstopoCSV:
+                        continue
+            if recognized == 0:
+                raise ValueError('ZIP enthält keine verwertbare swisstopo-Gebäudeadress-CSV mit STN_LABEL, ADR_NUMBER und ZIP_LABEL.')
+    elif path.suffix.lower() == '.csv':
         with path.open('rb') as data:
-            yield from _iter_csv(data,path.name)
+            yield from _iter_csv(data, path.name)
     else:
-        raise ValueError('swisstopo-Daten nur als lokale CSV oder ZIP-Datei importieren.')
+        raise ValueError('Datei ist keine gültige ZIP-Datei oder lokale CSV.')
+
+
+def inspect_source(path):
+    """Fast schema/header check without reading the complete (possibly huge) dataset."""
+    path = Path(path)
+    sources = []
+    def check(f, name, size):
+        with io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace', newline='') as stream:
+            head = stream.readline()
+        delimiter = ';' if head.count(';') > head.count(',') else ','
+        cols = [plain(c).upper() for c in next(csv.reader([head], delimiter=delimiter), [])]
+        if _valid_columns(cols):
+            sources.append({'file':name, 'size':size, 'columns':cols,
+                            'format':'ZIP_LABEL' if 'ZIP_LABEL' in cols else 'ZIP_ZIP4 + ZIP_NAME'})
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as z:
+            for member in z.infolist():
+                if member.is_dir() or not member.filename.lower().endswith('.csv'):
+                    continue
+                with z.open(member) as file:
+                    check(file, member.filename, member.file_size)
+    elif path.suffix.lower()=='.csv':
+        with path.open('rb') as file:
+            check(file, path.name, path.stat().st_size)
+    if not sources:
+        raise ValueError('Keine Gebäudeadress-CSV gefunden. Benötigt STN_LABEL, ADR_NUMBER und ZIP_LABEL (oder ZIP_ZIP4/ZIP_NAME).')
+    return sources
 
 
 def _official_status(value):
@@ -176,17 +258,15 @@ def import_snapshot(db, file_path, reference_date, progress=None):
             for row in _members(path):
                 street=_extract(row,'street')
                 number=norm_house_number(_extract(row,'number'))
-                postal=_get_postcode(_extract(row,'postcode'))
-                city=_extract(row,'city')
-                if city and re.match(r'^\d{4}\s+',city):
-                    city=re.sub(r'^\d{4}\s+','',city)
+                locations=_postcode_cities(row)
                 egaid=_extract(row,'egaid')
-                if not street or not postal or not city:
+                if not street or not locations:
                     continue
                 aliases=[norm_street(x) for x in street.split(' / ') if norm_street(x)]
-                for street_name in dict.fromkeys(aliases):
-                    batch.append((sid, postal, street_name, number, norm(city), egaid,
-                                  _official_status(_extract(row,'status')),_official(_extract(row,'official'))))
+                for postal, city in locations:
+                    for street_name in dict.fromkeys(aliases):
+                        batch.append((sid, postal, street_name, number, city, egaid,
+                                      _official_status(_extract(row,'status')),_official(_extract(row,'official'))))
                 total+=1
                 if total>6_000_000:
                     raise ValueError('Zu viele Datensätze: max. 6 Millionen.')

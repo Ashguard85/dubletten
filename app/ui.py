@@ -21,7 +21,7 @@ from migration import (is_dual, run_reference_check, reference_overview, referen
                        export_references, export_reference_field_differences,
                        export_workflow1_inventory, workflow1_inventory)
 from swisstopo import (ensure_schema as ensure_sw_schema, active_snapshot, import_snapshot,
-                      list_snapshots, validate_project, validation_counts, export_validation,
+                      list_snapshots, validate_project, validation_counts, export_validation, inspect_source,
                       RESULT_LABELS)
 import pandas as pd
 import io
@@ -54,7 +54,7 @@ db = connect(DB_PATH)
 ensure_sw_schema(db)
 
 st.title('🔎 CRM-Dublettenprüfung')
-st.caption('GUI v1.7 · CRM A ↔ CRM B · RapidFuzz / Splink 5 · Hausnummern · Training · Ollama · ID-Export')
+st.caption('GUI v1.7.2 · CRM A ↔ CRM B · RapidFuzz / Splink 5 · Hausnummern · Training · Ollama · ID-Export')
 st.info('🔒 CRM-Daten bleiben auf diesem Server. Die optionale KI verwendet nur das konfigurierte lokale Host-Ollama. Keine Cloud-API in der Anwendung.')
 
 with st.sidebar:
@@ -149,7 +149,7 @@ if show_swisstopo:
     base=Path('/app/data/swisstopo')
     base.mkdir(parents=True,exist_ok=True)
     local_files=sorted([x.name for x in base.iterdir() if x.is_file() and x.suffix.lower() in ('.csv','.zip')])
-    st.caption('Die unveränderte swisstopo-CSV oder ZIP kann bis 250 MB direkt über den Browser hochgeladen werden. Grössere Dateien bitte per SCP/SFTP ins Host-Verzeichnis kopieren.')
+    st.caption('Empfohlen: das originale swisstopo-ZIP (z. B. 136 MB) direkt hochladen. Die enthaltene CSV (ca. 400 MB) wird beim Import aus dem ZIP gestreamt – nicht entpacken. Webupload-Limit: 250 MB pro Datei.')
     uploaded=st.file_uploader('CSV/ZIP in den lokalen Server hochladen (max. 250 MB)',type=['zip','csv'],key='sw_upload')
     if uploaded is not None:
         if uploaded.size > 250 * 1024**2:
@@ -159,15 +159,16 @@ if show_swisstopo:
             name=Path(uploaded.name).name
             tmp=None
             try:
-                with tempfile.NamedTemporaryFile(mode='wb', dir=base, prefix='.swisstopo-upload-', suffix='.tmp', delete=False) as out:
+                with tempfile.NamedTemporaryFile(mode='wb', dir=base, prefix='.swisstopo-upload-', suffix=Path(name).suffix.lower(), delete=False) as out:
                     tmp=Path(out.name)
                     uploaded.seek(0)
                     shutil.copyfileobj(uploaded, out, length=1024*1024)
+                found=inspect_source(tmp)
                 os.replace(tmp,base/name)
-            except OSError as exc:
-                st.error(f'Lokales Speichern fehlgeschlagen (Speicherplatz/Berechtigungen prüfen): {exc}')
+            except (OSError, ValueError, __import__('zipfile').BadZipFile) as exc:
+                st.error(f'Upload wurde nicht gespeichert: {exc}')
             else:
-                st.success('ZIP/CSV wurde vollständig lokal gespeichert. Unten auswählen und importieren.')
+                st.success(f'ZIP/CSV lokal gespeichert. Swisstopo-Adressformat erkannt: {found[0]["format"]}. Unten importieren.')
                 st.rerun()
             finally:
                 if tmp is not None:
@@ -178,6 +179,7 @@ if show_swisstopo:
                  help='Datum aus dem offiziell heruntergeladenen Referenzpaket übernehmen, niemals das Importdatum erfinden.')
         if st.button('📥 swisstopo-Datenstand lokal importieren',type='primary'):
             try:
+                found=inspect_source(base/chosen)
                 with st.spinner('Referenzdatei wird in die lokale Datenbank eingelesen …'):
                     stage=st.empty()
                     sid,count=import_snapshot(db,base/chosen,stand,lambda m:stage.caption(m))
