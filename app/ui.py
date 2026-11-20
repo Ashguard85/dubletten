@@ -3,6 +3,8 @@ import json
 import hmac
 from pathlib import Path
 import os
+import shutil
+import tempfile
 from datetime import datetime
 
 import streamlit as st
@@ -147,16 +149,29 @@ if show_swisstopo:
     base=Path('/app/data/swisstopo')
     base.mkdir(parents=True,exist_ok=True)
     local_files=sorted([x.name for x in base.iterdir() if x.is_file() and x.suffix.lower() in ('.csv','.zip')])
-    st.caption('Grossen Datensatz am besten per SCP/SFTP ins Host-Verzeichnis kopieren. Kleine Testdaten können auch über den Browser hochgeladen werden.')
-    uploaded=st.file_uploader('Alternativ: CSV/ZIP in den lokalen Server hochladen (max. 60 MB)',type=['zip','csv'],key='sw_upload')
+    st.caption('Die unveränderte swisstopo-CSV oder ZIP kann bis 250 MB direkt über den Browser hochgeladen werden. Grössere Dateien bitte per SCP/SFTP ins Host-Verzeichnis kopieren.')
+    uploaded=st.file_uploader('CSV/ZIP in den lokalen Server hochladen (max. 250 MB)',type=['zip','csv'],key='sw_upload')
     if uploaded is not None:
-        if len(uploaded.getvalue())>60*1024**2:
-            st.error('Zu gross für Browserimport. Bitte den Datensatz direkt in das Host-Verzeichnis kopieren.')
+        if uploaded.size > 250 * 1024**2:
+            st.error('Datei über 250 MB: Bitte direkt in das Host-Verzeichnis kopieren.')
         elif st.button('Hochgeladene öffentliche Referenzdatei lokal speichern'):
+            # Stream in chunks to avoid creating a second full in-memory copy.
             name=Path(uploaded.name).name
-            (base/name).write_bytes(uploaded.getvalue())
-            st.success('Datei wurde lokal gespeichert. Unten auswählen.')
-            st.rerun()
+            tmp=None
+            try:
+                with tempfile.NamedTemporaryFile(mode='wb', dir=base, prefix='.swisstopo-upload-', suffix='.tmp', delete=False) as out:
+                    tmp=Path(out.name)
+                    uploaded.seek(0)
+                    shutil.copyfileobj(uploaded, out, length=1024*1024)
+                os.replace(tmp,base/name)
+            except OSError as exc:
+                st.error(f'Lokales Speichern fehlgeschlagen (Speicherplatz/Berechtigungen prüfen): {exc}')
+            else:
+                st.success('ZIP/CSV wurde vollständig lokal gespeichert. Unten auswählen und importieren.')
+                st.rerun()
+            finally:
+                if tmp is not None:
+                    tmp.unlink(missing_ok=True)
     if local_files:
         chosen=st.selectbox('Vorhandene lokale Datei',local_files)
         stand=st.text_input('Datenstand laut swisstopo-Download (YYYY-MM-DD)', value='',
