@@ -32,7 +32,7 @@ FIELD_ALIASES = {
     'city': ('ort', 'stadt', 'city', 'locality'),
     'country': ('land', 'country', 'landcode'),
 }
-REVIEW_STATES = ('offen', 'korrigiert', 'keine_aenderung')
+REVIEW_STATES = ('offen', 'korrigiert', 'keine_aenderung', 'uebersprungen')
 
 
 def guess_column(columns, field):
@@ -265,7 +265,8 @@ def job_counts(db,job_id):
     return [dict(x) for x in rows]
 
 
-def page_rows(db,job_id,status='Alle',decision='Alle',needle='',limit=50,offset=0):
+def _review_query(job_id, status='Alle', decision='Alle', needle=''):
+    # Parameter-bound filtering shared by pagination and navigation.
     wh=['job_id=?']
     args=[job_id]
     if status!='Alle':
@@ -273,14 +274,55 @@ def page_rows(db,job_id,status='Alle',decision='Alle',needle='',limit=50,offset=
     if decision!='Alle':
         wh.append('decision=?');args.append(decision)
     if needle:
-        wh.append('(source_id LIKE ? ESCAPE \'\\\' OR original_json LIKE ? ESCAPE \'\\\')')
+        wh.append("(source_id LIKE ? ESCAPE '\\' OR original_json LIKE ? ESCAPE '\\')")
         pattern='%' + needle.replace('\\','\\\\').replace('%','\\%').replace('_','\\_') + '%'
         args.extend([pattern,pattern])
-    where=' AND '.join(wh)
+    return ' AND '.join(wh),args
+
+
+def page_rows(db,job_id,status='Alle',decision='Alle',needle='',limit=50,offset=0):
+    where,args=_review_query(job_id,status,decision,needle)
     count=db.execute('SELECT COUNT(*) FROM address_job_rows WHERE '+where,args).fetchone()[0]
     results=db.execute('SELECT * FROM address_job_rows WHERE '+where+' ORDER BY row_no LIMIT ? OFFSET ?',
-                       [*args, max(1,min(100,limit)), max(0,offset)]).fetchall()
+                       [*args,max(1,min(100,limit)),max(0,offset)]).fetchall()
     return count,[dict(r) for r in results]
+
+
+def navigate_review(db,job_id,row_no,status='Alle',decision='Alle',needle='',direction='next',wrap=False,page_size=30):
+    # Return next filtered row and its page, including across page boundaries.
+    if direction not in ('next','previous'):
+        raise ValueError('Ungültige Navigationsrichtung.')
+    where,args=_review_query(job_id,status,decision,needle)
+    op,order=('>','ASC') if direction=='next' else ('<','DESC')
+    candidate=db.execute(f'''SELECT row_pk,row_no FROM address_job_rows
+            WHERE {where} AND row_no {op} ? ORDER BY row_no {order} LIMIT 1''',
+            [*args,row_no]).fetchone()
+    if candidate is None and wrap:
+        candidate=db.execute(f'''SELECT row_pk,row_no FROM address_job_rows
+                 WHERE {where} ORDER BY row_no {order} LIMIT 1''',args).fetchone()
+    if candidate is None:
+        return None
+    previous=db.execute(f'''SELECT COUNT(*) FROM address_job_rows
+            WHERE {where} AND row_no < ?''', [*args,candidate['row_no']]).fetchone()[0]
+    return (candidate['row_pk'], previous//page_size+1)
+
+
+def display_street_without_number(addr):
+    # Separate suffix house number without converting original casing.
+    raw=plain(addr.get('street_source',''))
+    house=plain(addr.get('house','')).replace(' ','').lower()
+    if not house:
+        return raw
+    display=raw.replace('–','-').replace('—','-')
+    m=re.fullmatch(r'(.+?)[,\s]+(\d{1,5}\s?[a-zA-Z]?(?:\s*[-/]\s*\d{1,5}\s?[a-zA-Z]?)?)',display)
+    if m and norm_house_number(m.group(2))==norm_house_number(house):
+        if norm(m.group(1)) not in ('route','highway','strasse','street','rue'):
+            # Use original-cased substring, not the normalized search key.
+            return raw[:len(m.group(1))]
+    leading=re.fullmatch(r'(\d{1,5}\s?[a-zA-Z]?(?:\s*[-/]\s*\d{1,5}\s?[a-zA-Z]?)?)[,\s]+(.+)',display)
+    if leading and norm_house_number(leading.group(1))==norm_house_number(house):
+        return raw[len(leading.group(1)):].lstrip(' ,')
+    return raw
 
 
 def save_review(db,job_id,row_pk,decision,corrected=None):
@@ -330,7 +372,12 @@ def _safe_csv(val):
     return text
 
 
-def export_job(db,job_id,only_changed=False):
+def export_job(db,job_id,only_changed=False,split_house=False,
+               street_column='Ziel_Strasse',house_column='Ziel_Hausnummer'):
+    # CSV with immutable source and optional dedicated street/house target fields.
+
+    # For unconfirmed rows these fields are only an unverified source parsing.
+    # They are not a migration approval.
     job=db.execute('SELECT * FROM address_jobs WHERE job_id=?',(job_id,)).fetchone()
     if not job:
         raise ValueError('Prüfauftrag nicht gefunden.')
@@ -338,6 +385,13 @@ def export_job(db,job_id,only_changed=False):
     extra=['Pruefung_ID','Swisstopo_Status','Hinweis','Amtliche_EGAID','Pruefentscheid',
            'Korrigiert_Strasse','Korrigiert_Hausnummer','Korrigiert_PLZ','Korrigiert_Ort',
            'Korrekturquelle','Swisstopo_Datenstand','Pruefdatum']
+    if split_house:
+        street_column=plain(street_column)
+        house_column=plain(house_column)
+        if (not street_column or not house_column or street_column==house_column
+                or any(n in [*cols,*extra,'Zieladresse_Basis'] for n in (street_column,house_column))):
+            raise ValueError('Die Zielspalten müssen unterschiedliche neue Spaltennamen haben.')
+        extra.extend([street_column,house_column,'Zieladresse_Basis'])
     ref=db.execute('SELECT reference_date FROM swisstopo_snapshots WHERE snapshot_id=?',(job['snapshot_id'],)).fetchone()[0]
     output=io.StringIO(newline='')
     writer=csv.writer(output,delimiter=';',lineterminator='\n')
@@ -352,5 +406,13 @@ def export_job(db,job_id,only_changed=False):
                 row['matched_egaid'],row['decision'],
                 corrected.get('strasse',''),corrected.get('hausnummer',''),
                 corrected.get('plz',''),corrected.get('ort',''),row['correction_basis'],ref,row['reviewed_at']]
+        if split_house:
+            addr=json.loads(row['normalized_json'])
+            if corrected:
+                added=(corrected['strasse'],corrected['hausnummer'],'bestaetigte_korrektur')
+            else:
+                added=(display_street_without_number(addr),addr.get('house',''),
+                       'aus_original_getrennt_ungeprueft' if addr.get('house') else 'hausnummer_nicht_erkannt')
+            values.extend(added)
         writer.writerow([_safe_csv(x) for x in values])
     return output.getvalue().encode('utf-8-sig')

@@ -55,7 +55,7 @@ db = connect(DB_PATH)
 ensure_sw_schema(db)
 
 st.title('🔎 CRM-Dublettenprüfung')
-st.caption('GUI v1.8 · CRM A ↔ CRM B · RapidFuzz / Splink 5 · Hausnummern · Training · Ollama · ID-Export')
+st.caption('GUI v1.8.1 · CRM A ↔ CRM B · RapidFuzz / Splink 5 · Hausnummern · Training · Ollama · ID-Export')
 st.info('🔒 CRM-Daten bleiben auf diesem Server. Die optionale KI verwendet nur das konfigurierte lokale Host-Ollama. Keine Cloud-API in der Anwendung.')
 
 with st.sidebar:
