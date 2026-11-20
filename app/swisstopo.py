@@ -53,6 +53,7 @@ def ensure_schema(db):
       snapshot_id INTEGER NOT NULL REFERENCES swisstopo_snapshots(snapshot_id) ON DELETE CASCADE,
       postal TEXT NOT NULL, street TEXT NOT NULL, house TEXT NOT NULL,
       city TEXT NOT NULL, egaid TEXT NOT NULL,
+      street_label TEXT NOT NULL DEFAULT '', city_label TEXT NOT NULL DEFAULT '', number_label TEXT NOT NULL DEFAULT '',
       adr_status TEXT NOT NULL, official TEXT NOT NULL,
       PRIMARY KEY (snapshot_id, postal, street, house, city, egaid)
     ) WITHOUT ROWID;
@@ -69,6 +70,10 @@ def ensure_schema(db):
     );
     CREATE INDEX IF NOT EXISTS idx_ch_results ON swisstopo_results(project_id,result);
     ''')
+    existing={r['name'] for r in db.execute('PRAGMA table_info(swisstopo_addresses)')}
+    for column in ('street_label', 'city_label', 'number_label'):
+        if column not in existing:
+            db.execute(f"ALTER TABLE swisstopo_addresses ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
     db.commit()
 
 
@@ -262,25 +267,33 @@ def import_snapshot(db, file_path, reference_date, progress=None):
                 egaid=_extract(row,'egaid')
                 if not street or not locations:
                     continue
-                aliases=[norm_street(x) for x in street.split(' / ') if norm_street(x)]
+                aliases={norm_street(x): x.strip() for x in street.split(' / ') if norm_street(x)}
+                postal_labels={}
+                zip_label=plain(row.get('ZIP_LABEL',''))
+                for part in zip_label.split(','):
+                    found=re.fullmatch(r'\s*(\d{4})\s+(.+?)\s*',part)
+                    if found:
+                        postal_labels[(found.group(1),norm(found.group(2)))]=found.group(2).strip()
                 for postal, city in locations:
-                    for street_name in dict.fromkeys(aliases):
+                    for street_name, raw_street in aliases.items():
                         batch.append((sid, postal, street_name, number, city, egaid,
+                                      raw_street, postal_labels.get((postal,city),_extract(row,'city')),
+                                      plain(_extract(row,'number')),
                                       _official_status(_extract(row,'status')),_official(_extract(row,'official'))))
                 total+=1
                 if total>6_000_000:
                     raise ValueError('Zu viele Datensätze: max. 6 Millionen.')
                 if len(batch)>=5000:
                     db.executemany('''INSERT OR IGNORE INTO swisstopo_addresses
-                        (snapshot_id,postal,street,house,city,egaid,adr_status,official)
-                        VALUES(?,?,?,?,?,?,?,?)''',batch)
+                        (snapshot_id,postal,street,house,city,egaid,street_label,city_label,number_label,adr_status,official)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)''',batch)
                     batch.clear()
                     if total%100000<5000:
                         progress(f'{total:,} amtliche Datensätze eingelesen')
             if batch:
                 db.executemany('''INSERT OR IGNORE INTO swisstopo_addresses
-                    (snapshot_id,postal,street,house,city,egaid,adr_status,official)
-                    VALUES(?,?,?,?,?,?,?,?)''',batch)
+                    (snapshot_id,postal,street,house,city,egaid,street_label,city_label,number_label,adr_status,official)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)''',batch)
             if total==0:
                 raise ValueError('Keine verwertbaren Gebäudeadressen in der Datei.')
             db.execute('UPDATE swisstopo_snapshots SET active=0 WHERE active=1')

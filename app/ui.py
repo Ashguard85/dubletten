@@ -20,6 +20,7 @@ from review_ui import render_review
 from migration import (is_dual, run_reference_check, reference_overview, reference_page,
                        export_references, export_reference_field_differences,
                        export_workflow1_inventory, workflow1_inventory)
+from address_service_ui import render as render_address_service
 from swisstopo import (ensure_schema as ensure_sw_schema, active_snapshot, import_snapshot,
                       list_snapshots, validate_project, validation_counts, export_validation, inspect_source,
                       RESULT_LABELS)
@@ -54,7 +55,7 @@ db = connect(DB_PATH)
 ensure_sw_schema(db)
 
 st.title('🔎 CRM-Dublettenprüfung')
-st.caption('GUI v1.7.2 · CRM A ↔ CRM B · RapidFuzz / Splink 5 · Hausnummern · Training · Ollama · ID-Export')
+st.caption('GUI v1.8 · CRM A ↔ CRM B · RapidFuzz / Splink 5 · Hausnummern · Training · Ollama · ID-Export')
 st.info('🔒 CRM-Daten bleiben auf diesem Server. Die optionale KI verwendet nur das konfigurierte lokale Host-Ollama. Keine Cloud-API in der Anwendung.')
 
 with st.sidebar:
@@ -64,15 +65,19 @@ with st.sidebar:
     st.header('Arbeitsbereich')
     projects = list_projects(db)
     available = {f"#{p['project_id']} · {p['title']}":p['project_id'] for p in projects}
-    choices = ['+ Neuer Abgleich', '🏔️ swisstopo-Datenstand'] + list(available)
+    choices = ['+ Neuer Abgleich', '🏔️ swisstopo-Datenstand', '📬 Schweizer Adressprüfung'] + list(available)
     selected = st.selectbox('Projekt / Datenstand',choices,
-                            index=0 if st.session_state.get('new_project') or not available else 2)
+                            index=0 if st.session_state.get('new_project') or not available else 3)
     pid = available.get(selected)
     show_swisstopo = selected == '🏔️ swisstopo-Datenstand'
+    show_address_service = selected == '📬 Schweizer Adressprüfung'
     st.divider()
-    installed = models()
+    installed = [] if show_address_service else models()
     st.write('**Lokale KI**')
-    if installed:
+    if show_address_service:
+        st.caption('Für die Schweizer Adressprüfung wird kein LLM benötigt.')
+        selected_model = MODEL
+    elif installed:
         st.success('Ollama erreichbar')
         selected_model = st.selectbox('Installiertes Modell', installed,
                          index=installed.index(MODEL) if MODEL in installed else 0)
@@ -193,6 +198,10 @@ if show_swisstopo:
         st.markdown('**Verfügbare lokale Datenstände**')
         st.dataframe(pd.DataFrame(list_snapshots(db)),hide_index=True,use_container_width=True)
     st.warning('Das amtliche Verzeichnis bestätigt Gebäudeadressen, nicht ob eine Firma oder Person dort noch ansässig ist. Nicht gefundene Adressen sind Prüffälle, keine automatische Löschfreigabe.')
+    st.stop()
+
+if show_address_service:
+    render_address_service(db)
     st.stop()
 
 if pid is None:
