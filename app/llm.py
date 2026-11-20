@@ -19,7 +19,7 @@ def _ollama_url() -> str:
 
 
 OLLAMA = _ollama_url()
-MODEL = os.environ.get('OLLAMA_TEXT_MODEL', 'qwen3:14b')
+MODEL = os.environ.get('OLLAMA_TEXT_MODEL', 'gemma3:12b')
 TIMEOUT = max(10, min(900, int(os.environ.get('OLLAMA_TIMEOUT_SECONDS', '600'))))
 # Keine Uebernahme von HTTP(S)_PROXY/ALL_PROXY aus der Container-Umgebung.
 _session = requests.Session()
