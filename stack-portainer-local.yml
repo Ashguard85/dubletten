@@ -30,7 +30,7 @@ services:
       - appnet
     read_only: true
     tmpfs:
-      - /tmp:rw,nosuid,size=128m
+      - /tmp:rw,nosuid,size=1024m
     security_opt:
       - no-new-privileges:true
     cap_drop:

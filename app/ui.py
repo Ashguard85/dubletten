@@ -1,6 +1,7 @@
 """Streamlit UI for local CRM cross-database duplicate review."""
 import json
 import hmac
+from pathlib import Path
 import os
 from datetime import datetime
 from pathlib import Path
@@ -10,9 +11,10 @@ import streamlit as st
 from engine import (FIELDS, LABELS, best_guess, connect, delete_project,
                     export_pairs, export_unmatched, import_project,
                     list_projects, page_pairs, project_stats, read_upload,
-                    run_matching, save_llm, set_review)
-from splink_matcher import run_splink_matching
+                    run_matching, save_llm, set_review, comparison_diagnostics)
+from splink_matcher import run_splink_matching, available_models, train_model_from_reviews
 from llm import MODEL, assess, models
+from match_config import validate_config, BLOCK_LIMITS, model_signature
 
 st.set_page_config(page_title=os.environ.get('APP_TITLE', 'CRM Dubletten – lokal'), page_icon='🔎',
                    layout='wide', initial_sidebar_state='expanded')
@@ -40,7 +42,7 @@ DB_PATH = os.environ.get('DB_PATH','/app/data/crm.sqlite')
 db = connect(DB_PATH)
 
 st.title('🔎 CRM-Dublettenprüfung')
-st.caption('Zwei CRM-Datenbestände lokal vergleichen • RapidFuzz oder Splink 5 • manuelle Prüfung • ID-Export')
+st.caption('CRM A ↔ CRM B · RapidFuzz / Splink 5 · getrennte Hausnummer · Training · Ollama · ID-Export')
 st.info('🔒 CRM-Daten bleiben auf diesem Server. Die optionale KI verwendet nur das konfigurierte lokale Host-Ollama. Keine Cloud-API in der Anwendung.')
 
 with st.sidebar:
@@ -68,6 +70,41 @@ with st.sidebar:
         selected_model = MODEL
     st.divider()
     st.caption('Heuristische Scores sind KEINE Wahrscheinlichkeiten. Keine Treffer werden automatisch freigegeben.')
+
+
+
+def splink_controls(key_prefix, default=None, disabled=False):
+    """UI controls feed a strict whitelist; arbitrary SQL cannot be submitted."""
+    c=validate_config(default)
+    with st.expander('⚙️ Splink-5-Parameter und Blocking-Regeln',expanded=not disabled):
+        split=st.checkbox('Strassenname und Hausnummer separat vergleichen',
+                          value=c['split_house_number'],key=key_prefix+'_split',disabled=disabled)
+        ca,cb=st.columns(2)
+        with ca:
+            strict=st.slider('Name: starke Ähnlichkeit',0.80,0.99,float(c['name_thresholds'][0]),0.01,
+                             key=key_prefix+'_strict',disabled=disabled)
+            short=st.slider('Name: weitere Ähnlichkeit',0.50,0.95,float(c['name_thresholds'][1]),0.01,
+                             key=key_prefix+'_loose',disabled=disabled)
+        with cb:
+            dist1=st.number_input('Strasse: geringe Levenshtein-Distanz',1,7,int(c['street_distances'][0]),
+                                  key=key_prefix+'_dist1',disabled=disabled)
+            dist2=st.number_input('Strasse: weitere Levenshtein-Distanz',2,15,int(c['street_distances'][1]),
+                                  key=key_prefix+'_dist2',disabled=disabled)
+        st.caption('Blocking definiert, welche Paare überhaupt bewertet werden. Zu strenge Regeln können echte Dubletten ausschliessen.')
+        blocks=st.multiselect('Blocking-Felder (mindestens 2)',list(BLOCK_LIMITS),default=c['blocking_fields'],
+                              key=key_prefix+'_blocks',disabled=disabled)
+        ca,cb=st.columns(2)
+        with ca:
+            u_pairs=st.select_slider('Zufallspaare für u-Schätzung',
+                       options=[10000,50000,100000,300000,500000,1000000,2000000],
+                       value=c['u_max_pairs'],key=key_prefix+'_u',disabled=disabled)
+        with cb:
+            em_pairs=st.select_slider('Max. EM-Trainingspaare je Regel',
+                       options=[10000,50000,100000,250000,500000,1000000],
+                       value=c['em_max_pairs'],key=key_prefix+'_em',disabled=disabled)
+    return {**c,'split_house_number':split,'name_thresholds':[strict,short],
+               'street_distances':[dist1,dist2],'blocking_fields':blocks,
+               'u_max_pairs':u_pairs,'em_max_pairs':em_pairs}
 
 
 def map_form(frame, side):
@@ -107,6 +144,22 @@ if pid is None:
              ['Splink 5 (statistisches Record Linkage)', 'RapidFuzz (bisherige Regeln)'],
              horizontal=True, help='Splink 5 trainiert statistische Parameter ab ausreichend grossen Datenmengen. Kleine Testmengen nutzen offen gekennzeichnete Startparameter.')
         engine = 'splink5' if engine_label.startswith('Splink') else 'rapidfuzz'
+        selected_pretrained_model = None
+        cfg = None
+        if engine == 'splink5':
+            stored = available_models(db)
+            model_labels = {'Neu trainieren (Standard / angepasste Parameter)': None}
+            for m in stored:
+                model_labels[f"Modell #{m['model_id']} · {m['title']} · {m['training_type']}"] = m
+            selected_label = st.selectbox('Modelltraining',list(model_labels),
+                help='Gespeicherte Modelle stammen ausschliesslich aus lokalen Projekten und liegen im persistenten Docker-Volume.')
+            selected_pretrained_model = model_labels[selected_label]
+            if selected_pretrained_model:
+                cfg = validate_config(json.loads(selected_pretrained_model['config_json']))
+                st.info('Gespeichertes Modell: Vergleichsregeln sind festgelegt. Es wird kein neues EM-Training durchgeführt.')
+                st.json({k:v for k,v in cfg.items() if k!='min_probability'},expanded=False)
+            else:
+                cfg = splink_controls('import')
         with st.form('mapping_form'):
             title = st.text_input('Projektname',value=f'CRM-Abgleich {datetime.now():%Y-%m-%d}')
             ca,cb = st.columns(2)
@@ -116,7 +169,7 @@ if pid is None:
                 min_probability = st.slider('Minimale Splink-Matchwahrscheinlichkeit (nur Kandidatenfilter)',
                                             0.01, 0.99, 0.05, 0.01,
                                             help='0.05 ist ein bewusst niedriger Prüf-Schwellwert. Es ist keine automatische Freigabe.')
-                st.caption('Splink 5 vergleicht nur CRM A mit CRM B. Die angezeigte Wahrscheinlichkeit ist modellabhängig und nicht unabhängig kalibriert.')
+                st.caption('Splink 5 vergleicht nur CRM A mit CRM B. Wahrscheinlichkeiten hängen vom trainierten Modell ab und sind nicht extern kalibriert.')
             else:
                 min_score = st.slider('Mindestwert für Kandidaten (RapidFuzz, heuristisch)',
                                       45,95,60,5)
@@ -128,8 +181,12 @@ if pid is None:
                     box = st.empty()
                     try:
                         if engine == 'splink5':
+                            cfg = validate_config(cfg)
+                            cfg['min_probability'] = min_probability
                             paircount, kept = run_splink_matching(db,project_id,
-                                minimum_probability=min_probability, progress=lambda message: box.caption(message))
+                                minimum_probability=min_probability, config=cfg,
+                                model_id=selected_pretrained_model['model_id'] if selected_pretrained_model else None,
+                                progress=lambda message: box.caption(message))
                         else:
                             paircount, kept = run_matching(db,project_id,minimum=min_score,
                                                             progress=lambda message: box.caption(message))
@@ -166,7 +223,7 @@ a.metric('Datensätze CRM A',f"{stats['a_count']:,}")
 b.metric('Datensätze CRM B',f"{stats['b_count']:,}")
 c.metric('Trefferkandidaten',f"{stats['candidate_count']:,}")
 d.metric('Bestätigte Zuordnungen',stats['accepted'])
-review, exports, manage = st.tabs(['✅ Prüfen', '📥 Exporte', '⚙️ Verwaltung'])
+review, training_tab, exports, manage = st.tabs(['✅ Prüfen', '🧠 Splink-Training', '📥 Exporte', '⚙️ Verwaltung'])
 
 with review:
     st.markdown('### Treffer vergleichen')
@@ -226,6 +283,14 @@ with review:
                 if is_splink and pair['match_probability'] is not None:
                     st.caption(f"**Splink-Modellwert:** {pair['match_probability']:.5f} · nur zur Priorisierung, keine Garantie")
                 st.caption(f"**Erkannte Merkmale:** {pair['reason']}")
+                with st.expander('🔎 Feldweise Diagnose (unabhängig vom Splink-Modell)'):
+                    ra_norm=db.execute('SELECT * FROM records WHERE pk=?',(pair['a_pk'],)).fetchone()
+                    rb_norm=db.execute('SELECT * FROM records WHERE pk=?',(pair['b_pk'],)).fetchone()
+                    st.dataframe(comparison_diagnostics(ra_norm,rb_norm),hide_index=True,
+                                 use_container_width=True)
+                    if ra_norm['address_conflict'] or rb_norm['address_conflict']:
+                        st.warning('Hausnummer im CRM-Feld widerspricht möglicherweise der Strassenzeile. Originaldaten prüfen.')
+                    st.caption('Diese Diagnose verwendet normalisierte Feldwerte. Es sind keine Splink-Beitragsgewichte oder kausalen Erklärungen.')
                 if pair['llm_decision']:
                     st.info(f"Lokale KI: **{pair['llm_decision']}** · {pair['llm_reason']} ({pair['llm_model']})")
                 k1,k2,k3,k4 = st.columns(4)
@@ -249,6 +314,49 @@ with review:
                             st.error(f'KI-Prüfung nicht möglich: {exc}')
     else:
         st.write('Keine Treffer für diese Filterauswahl.')
+
+
+with training_tab:
+    if not is_splink:
+        st.info('Training ist nur für Splink-Projekte verfügbar. RapidFuzz hat keine statistischen Modellparameter.')
+    else:
+        st.markdown('### Modell mit geprüften Beispielen nachtrainieren')
+        st.write('Bestätigte Paare werden als **positive Trainingsbeispiele** verwendet. Abgelehnte Paare bleiben ausschliesslich zur Evaluation zurückgehalten. Die bestehende Trefferliste und alle Prüfentscheide werden nicht verändert.')
+        reviewed=db.execute("""SELECT state,count(*) AS n FROM pairs WHERE project_id=? AND state IN ('bestaetigt','abgelehnt') GROUP BY state""",(pid,)).fetchall()
+        counts={row['state']:row['n'] for row in reviewed}
+        positive=counts.get('bestaetigt',0)
+        rejected=counts.get('abgelehnt',0)
+        c1,c2=st.columns(2)
+        c1.metric('Manuell bestätigte Paare',positive)
+        c2.metric('Manuell abgelehnte Paare',rejected)
+        st.caption('Mindestens 20 bestätigte Paare erforderlich. 20 % werden nicht trainiert und dienen als Prüfstichprobe. Diese ist nicht repräsentativ für unbekannte Paare.')
+        cfg_current = validate_config(model_info.get('config'))
+        train_cfg=splink_controls('retrain_'+str(pid),default=cfg_current)
+        train_cfg['min_probability']=st.slider('Schwelle für den Prüfstichproben-Test',0.01,0.99,
+                     float(cfg_current.get('min_probability',0.05)),0.01,key='validate_threshold_'+str(pid))
+        if st.button('🧠 Neues Splink-Modell aus bestätigten Paaren trainieren',
+                     disabled=positive<20,type='primary'):
+            try:
+                with st.spinner('Splink trainiert ausschliesslich lokal …'):
+                    status=st.empty()
+                    model_id,metrics=train_model_from_reviews(db,pid,train_cfg,
+                           progress=lambda message: status.caption(message))
+                st.success(f'Modell #{model_id} gespeichert. Es steht beim nächsten Import zur Auswahl.')
+                st.json(metrics,expanded=True)
+            except Exception as exc:
+                st.error(f'Training fehlgeschlagen: {exc}')
+        models_here=[m for m in available_models(db) if m['project_id']==pid]
+        if models_here:
+            st.markdown('### Gespeicherte Modellversionen')
+            for m in models_here:
+                with st.expander(f"Modell #{m['model_id']} · {m['created_at']} · {m['training_type']}"):
+                    st.json(json.loads(m['statistics_json']),expanded=False)
+                    path=Path(m['model_path'])
+                    if path.is_file():
+                        st.download_button('Modell-JSON zur lokalen Archivierung herunterladen',
+                           data=path.read_bytes(),file_name=f'crm_splink_modell_{m["model_id"]}.json',
+                           mime='application/json',key=f'model_export_{m["model_id"]}')
+                    st.caption('Das Modell ist lokal unter /app/data/models gespeichert und kann bei neuen Abgleichen wiederverwendet werden.')
 
 with exports:
     st.markdown('### Export für die CRM-Migration')

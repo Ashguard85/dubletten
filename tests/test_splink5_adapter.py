@@ -59,7 +59,7 @@ def test_preflight_rejects_large_candidate_fanout():
                                'email':[None]*30, 'phone':[None]*30,
                                'zip_name':[None]*30, 'zip_street':[None]*30,
                                'city_name':[None]*30, 'name_head':[None]*30}) for s in ('A','B')}
-    upper, blocks = _cap_block_fanout(frames, max_candidates=40)
+    upper, blocks = _cap_block_fanout(frames, max_candidates=40, fields=['uid','email','phone','zip_name','zip_street','city_name','name_head'])
     assert upper==30
     assert blocks[0]['pair_upper_bound']==30
 
@@ -93,14 +93,13 @@ def test_adapter_persists_probabilities_and_keeps_review_workflow(tmp_path,monke
             self.data=[(int(inputs[0][0].iloc[0]['unique_id']),
                         int(inputs[1][0].iloc[0]['unique_id']),
                         'CRM_A','CRM_B',0.987)]
-            self.position=0
         def project(self,names):
             assert names.startswith('unique_id_l, unique_id_r')
             return self
-        def fetchmany(self,n):
-            output=self.data[self.position:self.position+n]
-            self.position+=len(output)
-            return output
+        def iter_rows(self,batch_size=1024):
+            assert batch_size == 2000
+            # Strict DuckDB 2.0 contract: relation has no fetchmany method.
+            yield from self.data
     class Prediction:
         def __init__(self,inputs):self.inputs=inputs
         def as_duckdbpyrelation(self):return Relation(self.inputs)
@@ -114,6 +113,7 @@ def test_adapter_persists_probabilities_and_keeps_review_workflow(tmp_path,monke
             assert settings['link_type']=='link_only'
             assert len(inputs)==2
             self.inference=Inference(inputs)
+            self.misc=types.SimpleNamespace(save_model_to_json=lambda: {'_description':'mock-model'})
     fake.Linker=Linker
     monkeypatch.setitem(sys.modules, 'splink', fake)
     monkeypatch.setitem(sys.modules, 'splink.comparison_library', cl)
@@ -135,3 +135,51 @@ def test_adapter_persists_probabilities_and_keeps_review_workflow(tmp_path,monke
     assert 'splink_match_probability' in exported
     assert '0.987' in exported
     assert 'splink5' in exported
+
+
+def test_duckdb2_iter_rows_flushes_multiple_sqlite_batches(tmp_path, monkeypatch):
+    """Regression: store >2000 predictions without removed relation.fetchmany()."""
+    import splink_matcher as adapter
+
+    n = 2003
+    cols = ['ID', 'Firma', 'Strasse', 'PLZ', 'Ort', 'E-Mail', 'Telefon', 'UID']
+    values_a = [(f'A-{i:05d}', f'Firma {i}', f'Weg {i}', f'{6000+i}', 'Ort',
+                 f'firma{i}@example.invalid', '', f'CHE-{i:09d}') for i in range(n)]
+    values_b = [(f'B-{i:05d}', f'Firma {i}', f'Weg {i}', f'{6000+i}', 'Ort',
+                 f'firma{i}@example.invalid', '', f'CHE-{i:09d}') for i in range(n)]
+    db = connect(tmp_path / 'multi.sqlite')
+    pid = import_project(db, 'Splink Mehrfach-Chunks', pd.DataFrame(values_a, columns=cols),
+                         maps(), pd.DataFrame(values_b, columns=cols), maps(), engine='splink5')
+
+    class Relation:
+        def project(self, columns):
+            assert 'match_probability' in columns
+            return self
+
+        def iter_rows(self, batch_size=1024):
+            assert batch_size == 2000
+            for i in range(n):
+                yield (i + 1, n + i + 1, 'CRM_A', 'CRM_B', 0.91)
+
+    class Predictions:
+        def as_duckdbpyrelation(self):
+            return Relation()
+
+    class Inference:
+        def predict(self, threshold_match_probability):
+            return Predictions()
+
+    class Linker:
+        inference = Inference()
+        misc = types.SimpleNamespace(save_model_to_json=lambda: {'_description':'mock-model'})
+
+    splink_mock = types.ModuleType('splink')
+    monkeypatch.setitem(sys.modules, 'splink', splink_mock)
+    monkeypatch.setattr(adapter, 'package_version', lambda name: '5.0.0')
+    monkeypatch.setattr(adapter, '_new_linker', lambda *args, **kwargs: Linker())
+    monkeypatch.setattr(adapter, '_train', lambda *args, **kwargs: None)
+    upper, kept = run_splink_matching(db, pid)
+    assert upper >= n
+    assert kept == n
+    assert db.execute('SELECT COUNT(*) FROM pairs WHERE project_id=?', (pid,)).fetchone()[0] == n
+    assert db.execute('SELECT COUNT(DISTINCT a_pk) FROM pairs WHERE project_id=?', (pid,)).fetchone()[0] == n

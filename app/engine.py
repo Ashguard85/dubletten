@@ -12,11 +12,11 @@ from pathlib import Path
 import pandas as pd
 from rapidfuzz import fuzz
 
-FIELDS = ('id', 'company', 'first_name', 'last_name', 'street', 'postcode',
+FIELDS = ('id', 'company', 'first_name', 'last_name', 'street', 'house_number', 'postcode',
           'city', 'country', 'email', 'phone', 'uid')
 LABELS = {
     'id': 'Eindeutige CRM-ID', 'company': 'Firma / Organisation',
-    'first_name': 'Vorname', 'last_name': 'Nachname', 'street': 'Strasse + Hausnummer',
+    'first_name': 'Vorname', 'last_name': 'Nachname', 'street': 'Strasse (mit oder ohne Hausnummer)', 'house_number': 'Hausnummer (optional separates Feld)',
     'postcode': 'PLZ', 'city': 'Ort', 'country': 'Land', 'email': 'E-Mail',
     'phone': 'Telefon', 'uid': 'UID / MWST-Nummer / Handelsregister-ID',
 }
@@ -26,6 +26,7 @@ ALIASES = {
     'first_name': ['vorname', 'firstname', 'first_name', 'givenname'],
     'last_name': ['nachname', 'lastname', 'last_name', 'surname'],
     'street': ['strasse', 'straße', 'street', 'address', 'adresse', 'adresszeile1', 'address1'],
+    'house_number': ['hausnummer', 'hausnr', 'house_number', 'housenumber', 'street_number', 'streetnumber', 'nr_hauptadresse'],
     'postcode': ['plz', 'postcode', 'zip', 'zipcode', 'postleitzahl'],
     'city': ['ort', 'stadt', 'city', 'town'],
     'country': ['land', 'country'],
@@ -68,6 +69,42 @@ def norm_street(s):
     s = re.sub(r'\b(avenue|ave)\b', 'avenue', s)
     s = re.sub(r'\b(platz|pl)\b', 'platz', s)
     return s
+
+
+def norm_house_number(s):
+    """Keep suffixes and ranges (12a, 12/14), not just digits."""
+    number = plain(s).lower().strip().replace('–', '-').replace('—', '-')
+    number = re.sub(r'\s*([/-])\s*', r'\1', number)
+    number = re.sub(r'(?<=\d)\s+(?=[a-z]$)', '', number)
+    return number if re.fullmatch(r'\d{1,5}[a-z]?(?:[/-]\d{1,5}[a-z]?)?', number) else ''
+
+
+def split_street_house(street, explicit_number=''):
+    """Conservative CH/DE address split, keeping original data untouched.
+
+    No guessing for ambiguous names such as 'Route 66' or 'Strasse des 17. Juni'.
+    """
+    raw = plain(street).strip().replace('–', '-').replace('—', '-')
+    explicit = norm_house_number(explicit_number)
+    if not raw:
+        return '', explicit, bool(plain(explicit_number) and not explicit)
+    trail = re.fullmatch(r'(.+?)[,\s]+(\d{1,5}\s?[a-zA-Z]?(?:\s*[-/]\s*\d{1,5}\s?[a-zA-Z]?)?)', raw)
+    lead = re.fullmatch(r'(\d{1,5}\s?[a-zA-Z]?(?:\s*[-/]\s*\d{1,5}\s?[a-zA-Z]?)?)[,\s]+(.+)', raw)
+    prefix = ''
+    extracted = ''
+    if trail:
+        prefix, extracted = trail.group(1).strip(), norm_house_number(trail.group(2))
+        if norm(prefix) in ('route', 'highway', 'strasse', 'street', 'rue'):
+            prefix, extracted = '', ''
+    elif lead:
+        extracted = norm_house_number(lead.group(1))
+        prefix = lead.group(2).strip()
+    if explicit:
+        # An explicit CRM house-number column takes precedence. A mismatching
+        # number extracted from the street field is flagged rather than hidden.
+        conflict = bool(extracted and extracted != explicit)
+        return norm_street(prefix if extracted else raw), explicit, conflict
+    return (norm_street(prefix), extracted, False) if extracted else (norm_street(raw), '', False)
 
 
 def norm_phone(s):
@@ -144,7 +181,9 @@ def to_record(raw):
     person = norm_name(' '.join(x for x in (raw['first_name'], raw['last_name']) if x))
     # Unterschiedliche Ansprechpartner bei derselben Firma nicht blind vereinen.
     name_n = ' '.join(part for part in (company,person) if part)
-    street_n = norm_street(raw['street'])
+    street_name, house_number, address_conflict = split_street_house(
+        raw['street'], raw.get('house_number', ''))
+    street_n = norm_street(raw['street']) or street_name
     postal_n = re.sub(r'\W', '', plain(raw['postcode']).upper())
     if postal_n.startswith('CH') and len(postal_n) == 6 and postal_n[2:].isdigit():
         postal_n = postal_n[2:]
@@ -153,13 +192,14 @@ def to_record(raw):
     phone_n = norm_phone(raw['phone'])
     uid_n = norm_uid(raw['uid'])
     return {
-        'name': name_n, 'street': street_n, 'postal': postal_n,
+        'name': name_n, 'street': street_n, 'street_name': street_name,
+        'house_number': house_number, 'address_conflict': int(address_conflict), 'postal': postal_n,
         'city': city_n, 'email': email_n, 'phone': phone_n, 'uid': uid_n,
         'zip_name': f'{postal_n}|{name_n[:6]}' if postal_n and len(name_n) >= 4 else '',
         'zip_street': f'{postal_n}|{street_n[:7]}' if postal_n and len(street_n) >= 5 else '',
         'city_name': f'{city_n[:8]}|{name_n[:8]}' if city_n and len(name_n) >= 5 else '',
         'name_head': name_n[:10] if len(name_n) >= 7 else '',
-        'street_number': ''.join(re.findall(r'\d+', street_n)),
+        'street_number': house_number,
     }
 
 
@@ -184,6 +224,8 @@ def connect(db_path):
         phone TEXT NOT NULL, uid TEXT NOT NULL, zip_name TEXT NOT NULL,
         zip_street TEXT NOT NULL, city_name TEXT NOT NULL, name_head TEXT NOT NULL,
         street_number TEXT NOT NULL,
+        street_name TEXT NOT NULL DEFAULT '', house_number TEXT NOT NULL DEFAULT '',
+        address_conflict INTEGER NOT NULL DEFAULT 0,
         UNIQUE(project_id,side,source_id)
     );
     CREATE TABLE IF NOT EXISTS pairs (
@@ -208,6 +250,28 @@ def connect(db_path):
         db.execute("ALTER TABLE projects ADD COLUMN engine TEXT NOT NULL DEFAULT 'rapidfuzz'")
     if 'match_model_info' not in project_columns:
         db.execute("ALTER TABLE projects ADD COLUMN match_model_info TEXT NOT NULL DEFAULT ''")
+    record_columns = {r['name'] for r in db.execute('PRAGMA table_info(records)')}
+    has_new_address_fields = 'street_name' in record_columns
+    for column, ddl in [('street_name', "TEXT NOT NULL DEFAULT ''"),
+                        ('house_number', "TEXT NOT NULL DEFAULT ''"),
+                        ('address_conflict', 'INTEGER NOT NULL DEFAULT 0')]:
+        if column not in record_columns:
+            db.execute(f'ALTER TABLE records ADD COLUMN {column} {ddl}')
+    if not has_new_address_fields:
+        # Upgrade existing persisted records without changing their source fields.
+        cursor = db.execute('SELECT pk,original_json,street FROM records')
+        rows = cursor.fetchall()
+        for item in rows:
+            raw = json.loads(item['original_json'])
+            st, no, conflict = split_street_house(raw.get('street') or item['street'],
+                                                 raw.get('house_number', ''))
+            db.execute('UPDATE records SET street_name=?,house_number=?,address_conflict=? WHERE pk=?',
+                       (st, no, int(conflict), item['pk']))
+    db.execute('''CREATE TABLE IF NOT EXISTS trained_models (
+        model_id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL, config_json TEXT NOT NULL, model_path TEXT NOT NULL,
+        statistics_json TEXT NOT NULL DEFAULT '{}', training_type TEXT NOT NULL
+    )''')
     pair_columns = {r['name'] for r in db.execute('PRAGMA table_info(pairs)')}
     if 'match_probability' not in pair_columns:
         db.execute('ALTER TABLE pairs ADD COLUMN match_probability REAL')
@@ -236,16 +300,16 @@ def import_project(db, title, frame_a, map_a, frame_b, map_b, engine='rapidfuzz'
                 batch.append((pid,side,raw['id'],json.dumps(raw,ensure_ascii=False),
                               json.dumps(original,ensure_ascii=False), n['name'],n['street'],n['postal'],n['city'],n['email'],n['phone'],
                               n['uid'],n['zip_name'],n['zip_street'],n['city_name'],n['name_head'],
-                              n['street_number']))
+                              n['street_number'], n['street_name'], n['house_number'], n['address_conflict']))
                 if len(batch) >= 1000:
                     db.executemany('''INSERT INTO records(project_id,side,source_id,original_json,
                         source_json,name,street,postal,city,email,phone,uid,zip_name,zip_street,city_name,
-                        name_head,street_number) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
+                        name_head,street_number,street_name,house_number,address_conflict) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
                     batch = []
             if batch:
                 db.executemany('''INSERT INTO records(project_id,side,source_id,original_json,
                     source_json,name,street,postal,city,email,phone,uid,zip_name,zip_street,city_name,
-                    name_head,street_number) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
+                    name_head,street_number,street_name,house_number,address_conflict) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', batch)
     return pid
 
 
@@ -445,5 +509,37 @@ def export_unmatched(db,pid,side):
 
 
 def delete_project(db,pid):
+    # Trained model JSON belongs to the deleted project and can contain
+    # parameter estimates from its records. Never leave it on the host.
+    folder=(Path(db.execute('PRAGMA database_list').fetchone()['file']).resolve().parent/'models').resolve()
+    model_files=[Path(r['model_path']).resolve() for r in db.execute(
+        'SELECT model_path FROM trained_models WHERE project_id=?',(pid,))]
     with db:
         db.execute('DELETE FROM projects WHERE project_id=?',(pid,))
+    for path in model_files:
+        if path.is_relative_to(folder) and path.is_file():
+            path.unlink()
+
+
+
+def comparison_diagnostics(a, b):
+    """Evidence per normalised field; independent of Splink's learned weights."""
+    fields = [('name', 'Name'), ('street_name', 'Strassenname'),
+              ('house_number', 'Hausnummer'), ('postal', 'PLZ'), ('city', 'Ort'),
+              ('uid', 'UID'), ('email', 'E-Mail'), ('phone', 'Telefon')]
+    details = []
+    for key, label in fields:
+        left = a[key] or ''
+        right = b[key] or ''
+        if not left or not right:
+            status, score = 'Nicht vergleichbar', None
+        elif left == right:
+            status, score = 'Identisch', 100
+        elif key in ('house_number', 'postal', 'uid', 'email', 'phone'):
+            status, score = 'Abweichend', 0
+        else:
+            score = int(round(fuzz.WRatio(left, right)))
+            status = 'Ähnlich' if score >= 80 else 'Abweichend'
+        details.append({'Feld': label, 'CRM A': left, 'CRM B': right,
+                        'Befund': status, 'Ähnlichkeit': score})
+    return details
