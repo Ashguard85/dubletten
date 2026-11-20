@@ -31,6 +31,39 @@ FOCUS_CSS = '''<style>
 [data-testid="stMetric"] {padding:.2rem .5rem !important}
 div[data-testid="stForm"] {border:0; padding:0;}
 section[data-testid="stSidebar"] {min-width:220px;}
+
+/* Address focus: one original excerpt + four brief evidence-coloured rows. */
+.fsv-card {border:1px solid #dce5e9;border-radius:10px;overflow:hidden;margin:.28rem 0 .3rem}
+.fsv-source {background:#f2f6f8;padding:10px 16px;border-bottom:1px solid #dce5e9}
+.fsv-eyebrow {font-size:10px;letter-spacing:.7px;font-weight:700;color:#617587}
+.fsv-original-line {font-size:18px;font-weight:750;color:#19394e;line-height:1.35;overflow-wrap:anywhere}
+.fsv-original-place {font-size:13px;color:#415c70;font-weight:600;line-height:1.35}
+.fsv-comparison {padding:4px 12px 8px}
+.fsv-label-row,.fsv-compare-row {display:grid;grid-template-columns:16% 25% 3% 30% 26%;align-items:center;column-gap:0;padding:4px 5px}
+.fsv-label-row {font-size:10px;color:#738494;font-weight:700;border-bottom:1px solid #e8edf1}
+.fsv-compare-row {min-height:36px;border-bottom:1px solid #edf1f3;font-size:12px}
+.fsv-compare-row:last-child {border-bottom:0}
+.fsv-field {font-weight:700;color:#334d5f}
+.fsv-value,.fsv-target {padding:5px 7px;border-radius:5px;overflow-wrap:anywhere}
+.fsv-target {font-weight:700}
+.fsv-arrow {text-align:center;color:#93a3ae}
+.fsv-green {background:#e8f5eb;color:#1c6c3c}
+.fsv-amber {background:#fff1d6;color:#80540b}
+.fsv-red {background:#fce8e7;color:#9c2d31}
+.fsv-neutral {background:#edf2f5;color:#516577}
+.fsv-status {font-size:10.5px;font-weight:700;padding-left:8px}
+.fsv-status-green {color:#238047}
+.fsv-status-amber {color:#956214}
+.fsv-status-red {color:#a13439}
+.fsv-status-neutral {color:#708391}
+.fsv-alternatives {background:#fff9eb;border-top:1px solid #f1dfb8;padding:8px 14px;font-size:10.5px;color:#7a551d}
+.fsv-number {display:inline-block;background:#fff1d0;border:1px solid #ebd29f;padding:2px 7px;border-radius:12px;margin:3px 3px 0;font-weight:700}
+.fsv-hint {background:#f5f8fa;border-top:1px solid #e5ebed;padding:7px 14px;color:#657787;font-size:11px}
+@media (max-width:750px){
+.fsv-label-row,.fsv-compare-row {grid-template-columns:18% 24% 3% 31% 24%;font-size:11px}
+.fsv-status{font-size:9px;padding-left:4px}
+.fsv-original-line{font-size:15px}
+}
 </style>'''
 
 
@@ -162,48 +195,9 @@ def _case_reference(db, pid, row):
         st.json({'A':_raw(row,'a_json'),'B':_raw(row,'b_json')})
 
 
-def _case_swiss(row):
-    from address_service import display_street_without_number
-    addr=_raw(row,'normalized_json')
-    st.text(f"{_short(addr.get('street_source',''),100)}  ·  {_caption(addr.get('postal_source'))} {_caption(addr.get('city_source'))}")
-    st.text(f"ID {_caption(row['source_id'])}  ·  {_caption(row['result'])}  ·  {_caption(row['decision'])}")
-    with st.expander('Vorschlag wählen', expanded=False):
-        proposals=json.loads(row['proposals_json'] or '[]')
-        labels=['Manuell'] + [f"{p.get('strasse','')} {p.get('hausnummer','')}, {p.get('plz','')} {p.get('ort','')}"
-                              for p in proposals]
-        selected=st.selectbox('Amtliche Vorschläge',range(len(labels)),format_func=lambda i:labels[i],
-                              index=1 if proposals else 0,
-                              key=f'focus_proposal_{row["row_pk"]}')
-    proposals=json.loads(row['proposals_json'] or '[]')
-    sel=st.session_state.get(f'focus_proposal_{row["row_pk"]}', 1 if proposals else 0)
-    official=proposals[sel-1] if 0<sel<=len(proposals) else {}
-    corrected=_raw(row,'correction_json') if row['decision']=='korrigiert' else {}
-    proposed=corrected or official
-    st.caption('Vorher ist unverändert. Nachher ist bis zur Bestätigung nur ein Vorschlag.')
-    with st.form(f'focus_swiss_form_{row["row_pk"]}'):
-        ca,cb=st.columns([1,1],gap='medium')
-        with ca:
-            st.markdown('**VORHER**')
-            st.text('Strasse: '+_caption(addr.get('street_source')))
-            st.text('Hausnummer: '+_caption(addr.get('house_source') or addr.get('house')))
-            st.text('PLZ: '+_caption(addr.get('postal_source')))
-            st.text('Ort: '+_caption(addr.get('city_source')))
-        with cb:
-            st.markdown('**NACHHER**')
-            key=f'fedit_{row["row_pk"]}_{sel}'
-            street=st.text_input('Strasse',value=proposed.get('strasse',display_street_without_number(addr)),key=key+'_street')
-            house=st.text_input('Hausnummer',value=proposed.get('hausnummer',addr.get('house','')),key=key+'_house')
-            postal=st.text_input('PLZ',value=proposed.get('plz',addr.get('postal','')),key=key+'_postal')
-            city=st.text_input('Ort',value=proposed.get('ort',addr.get('city_source','')),key=key+'_city')
-        a,b,c,d=st.columns(4)
-        did_correct=a.form_submit_button('✓ Korrigieren',use_container_width=True,type='primary')
-        did_keep=b.form_submit_button('✓ Unverändert',use_container_width=True)
-        did_skip=c.form_submit_button('→ Überspringen',use_container_width=True)
-        did_reset=d.form_submit_button('↩ Zurücksetzen',use_container_width=True)
-        action=('korrigiert' if did_correct else 'keine_aenderung' if did_keep
-                else 'uebersprungen' if did_skip else 'offen' if did_reset else None)
-    correction={'strasse':street,'hausnummer':house,'plz':postal,'ort':city} if action=='korrigiert' else None
-    return action,correction
+def _case_swiss(db, row):
+    from focus_swiss_view import render_swiss_case
+    return render_swiss_case(db, row)
 
 
 def _scope_key(mode, identity):
@@ -237,6 +231,12 @@ def _render_focus(db):
         st.info('Noch keine Prüfdaten vorhanden. Bitte zuerst ein CRM-Projekt oder eine Schweizer Adressprüfung importieren.')
         return
 
+    swiss_route = st.session_state.get('_focus_route_swiss')
+    if swiss_route and MODES[2] in available:
+        st.session_state['focus_mode'] = MODES[2]
+        matching = next((j for j in jobs if j['job_id'] == swiss_route), None)
+        if matching:
+            st.session_state['focus_selection_2'] = matching
     x, y = st.columns([2, 3], gap='small')
     with x:
         mode = st.selectbox('Prüfart', available, key='focus_mode')
@@ -399,7 +399,7 @@ def _render_focus(db):
                     st.download_button('CSV herunterladen',st.session_state[exp_key],
                         file_name=f'referenzpruefung_{identity}.csv',mime='text/csv')
         else:
-            action,correction=_case_swiss(row)
+            action,correction=_case_swiss(db,row)
             if action is not None:
                 from address_service import save_review
                 save_review(db,identity,row['row_pk'],action,correction)
@@ -424,7 +424,10 @@ def _render_focus(db):
 
 def render_focus_workspace(db):
     st.markdown(FOCUS_CSS, unsafe_allow_html=True)
-    st.markdown('### 🎯 Fokusprüfung')
-    st.caption('Filter einstellen → Eintrag kontrollieren → entscheiden → nächster Eintrag. '
-               'Keine automatische Datenmigration. Die bisherigen Ansichten bleiben unverändert erreichbar.')
+    if st.session_state.get('_focus_route_swiss'):
+        if st.button('← Zurück zur Schweizer Adressprüfung', key='focus_exit_swiss', type='secondary'):
+            st.session_state.pop('_focus_route_swiss', None)
+            st.session_state['_focus_active'] = False
+            st.rerun()
+    st.markdown('**🎯 Fokusprüfung** · ein Fall nach dem anderen')
     _render_focus(db)
