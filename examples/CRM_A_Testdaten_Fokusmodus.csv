@@ -1,0 +1,67 @@
+﻿ID;Firma;Vorname;Nachname;Strasse;Hausnummer;PLZ;Ort;Land;E-Mail;Telefon;B_Referenz;Migration;Testfall;Soll_B_ID
+00001;Alpen IT-Dienstleistungen AG;;;Bahnhofstrasse;5;6003;Luzern;CH;kontakt001@example.invalid;+41 41 555 01 07;01001;Ja;REFERENZ_IDENTISCH;01001
+00002;Seeland Elektrotechnik AG;;;Hauptstr.;8;6048;Horw;CH;kontakt002@example.invalid;+41 41 555 02 14;01002;Ja;REFERENZ_STRASSENABKUERZUNG;01002
+00003;Pilatus Büroservice AG;;;Industriestrasse;13;6300;Zug;CH;kontakt003@example.invalid;+41 41 555 03 21;01003;Ja;REFERENZ_HAUSNUMMER_FALSCH;01003
+00004;Mittelland Holzbau AG;;;Rosenbergstrasse;14;9998;St. Gallen;CH;kontakt004@example.invalid;+41 41 555 04 28;01004;Ja;REFERENZ_PLZ_FALSCH;01004
+00005;Helvetia Logistik AG;;;Seftigenstrasse;17;3007;Anderer Ort;CH;kontakt005@example.invalid;+41 41 555 05 35;01005;Ja;REFERENZ_ORT_FALSCH;01005
+00006;Brunnen Haustechnik GmbH;;;Langstrasse;20;8004;Zürich;CH;kontakt006@example.invalid;+41 41 555 06 42;01006;Ja;REFERENZ_FIRMA_ABWEICHEND;01006
+00007;Winkel Architektur AG;;;Steinenvorstadt;23;4051;Basel;CH;kontakt007@example.invalid;+41 41 555 07 49;09997;Ja;REFERENZ_NICHT_IN_B;
+00008;Sonnen Treuhand AG;;;Technikumstrasse;26;8400;Winterthur;CH;kontakt008@example.invalid;+41 41 555 08 56;01008;Ja;REFERENZ_DOPPELT_1;01008
+00009;Felsen Gartenbau AG;;;Zentralstrasse;29;2502;Biel;CH;kontakt009@example.invalid;+41 41 555 09 63;01008;Ja;REFERENZ_DOPPELT_2;01008
+00010;Aare Medientechnik AG;;;Aarauerstrasse;32;4600;Olten;CH;andere-adresse@example.invalid;+41 41 555 10 70;01010;Ja;REFERENZ_EMAIL_ABWEICHEND;01010
+00011;Rigi Fahrzeugtechnik AG;;;Tribschenstrasse;35;6005;Luzern;CH;kontakt011@example.invalid;+41 41 555 99 99;01011;Ja;REFERENZ_TELEFON_ABWEICHEND;01011
+00012;Müller Elektroplanung AG;;;Gotthardstrasse;38;8800;Thalwil;CH;kontakt012@example.invalid;+41 41 555 12 84;01012;Ja;REFERENZ_UMLAUT;01012
+00013;See Planung AG;;;Bahnhofstrasse;41;6003;Luzern;CH;kontakt013@example.invalid;+41 41 555 13 91;01013;Ja;REFERENZ_IDENTISCH;01013
+00014;Berg Gebäudetechnik AG;;;Hauptstrasse;44;6048;Horw;CH;kontakt014@example.invalid;+41 41 555 14 98;01014;Ja;REFERENZ_IDENTISCH;01014
+00015;Hirsch IT-Dienstleistungen AG;;;Industriestrasse;47;6300;Zug;CH;kontakt015@example.invalid;+41 41 555 15 05;01015;Ja;REFERENZ_IDENTISCH;01015
+00016;Tal Elektrotechnik AG;;;Rosenbergstrasse;50;9000;St. Gallen;CH;kontakt016@example.invalid;+41 41 555 16 12;01016;Ja;REFERENZ_IDENTISCH;01016
+00017;Stern Büroservice AG;;;Seftigenstrasse;53;3007;Bern;CH;kontakt017@example.invalid;+41 41 555 17 19;01017;Ja;REFERENZ_IDENTISCH;01017
+00018;Kreuz Holzbau AG;;;Langstrasse 56;;8004;Zürich;CH;kontakt018@example.invalid;+41 41 555 18 26;01018;Ja;REFERENZ_NUMMER_IN_STRASSE;01018
+00019;Kern Logistik AG;;;Steinenvorstadt;59;4051;Basel;CH;kontakt019@example.invalid;+41 41 555 19 33;09999;Ja;REFERENZ_NICHT_IN_B;
+00020;Werk Haustechnik AG;;;Technikumstrasse;62;8400;Winterthur;CH;kontakt020@example.invalid;+41 41 555 20 40;01020;Ja;REFERENZ_IDENTISCH;01020
+00021;Stadt Architektur AG;;;Zentralstrasse;65;2502;Biel;CH;kontakt021@example.invalid;+41 41 555 21 47;01021;Ja;REFERENZ_IDENTISCH;01021
+00022;Ufer Treuhand AG;;;Aarauerstrasse;68;4600;Olten;CH;kontakt022@example.invalid;+41 41 555 22 54;01022;Ja;REFERENZ_IDENTISCH;01022
+00023;Garten Gartenbau AG;;;Tribschenstrasse;71;6005;Luzern;CH;kontakt023@example.invalid;+41 41 555 23 61;01023;Ja;REFERENZ_IDENTISCH;01023
+00024;Brücke Medientechnik AG;;;Gotthardstrasse;74;8800;Thalwil;CH;kontakt024@example.invalid;+41 41 555 24 68;;Ja;OHNE_REFERENZ_EXAKT;02024
+00025;Fokus Fahrzeugtechnik AG;;;Bahnhofstr.;2;6003;Luzern;CH;kontakt025@example.invalid;+41 41 555 25 75;;Ja;OHNE_REFERENZ_STRASSENABKUERZUNG;02025
+00026;Kiesel Druckerei AG;;;Hauptstrasse;5;6048;Horw;CH;kontakt026@example.invalid;+41 41 555 26 82;;Ja;OHNE_REFERENZ_EXAKT;02026
+00027;Waldblick Planung;;;Industriestrasse;8;6300;Zug;CH;kontakt027@example.invalid;+41 41 555 27 89;;Ja;OHNE_REFERENZ_FIRMENVARIANTE;02027
+00028;Moos Gebäudetechnik AG;;;Rosenbergstrasse;11;9000;St. Gallen;CH;kontakt028@example.invalid;+41 41 555 28 96;;Ja;OHNE_REFERENZ_EXAKT;02028
+00029;Feld IT-Dienstleistungen AG;;;Seftigenstrasse 14;;3007;Bern;CH;kontakt029@example.invalid;+41 41 555 29 03;;Ja;OHNE_REFERENZ_NUMMER_IN_STRASSE;02029
+00030;QUELL ELEKTROTECHNIK AG;;;Langstrasse;17;8004;Zürich;CH;kontakt030@example.invalid;+41 41 555 30 10;;Ja;OHNE_REFERENZ_GROSS_KLEIN;02030
+00031;Baupunkt Büroservice AG;;;Steinenvorstadt;20;4051;Basel;CH;kontakt031@example.invalid;+41 41 555 31 17;;Ja;OHNE_REFERENZ_STRASSENABKUERZUNG;02031
+00032;Linden Holzbau AG;;;Technikumstrasse;23;8400;Winterthur;CH;kontakt032@example.invalid;+41 41 555 32 24;;Ja;OHNE_REFERENZ_EXAKT;02032
+00033;Silber Logistik;;;Zentralstrasse;26;2502;Biel;CH;kontakt033@example.invalid;+41 41 555 33 31;;Ja;OHNE_REFERENZ_FIRMENVARIANTE;02033
+00034;Fjord Haustechnik AG;;;Aarauerstrasse;29;4600;Olten;CH;kontakt034@example.invalid;+41 41 555 34 38;;Ja;OHNE_REFERENZ_EXAKT;02034
+00035;Mosaik Architektur AG;;;Tribschenstrasse 32;;6005;Luzern;CH;kontakt035@example.invalid;+41 41 555 35 45;;Ja;OHNE_REFERENZ_NUMMER_IN_STRASSE;02035
+00036;Rotsee Treuhand AG;;;Gotthardstrasse;35;8800;Thalwil;CH;kontakt036@example.invalid;+41 41 555 36 52;;Ja;OHNE_REFERENZ_EXAKT;02036
+00037;Korn Gartenbau AG;;;Bahnhofstr.;38;6003;Luzern;CH;kontakt037@example.invalid;+41 41 555 37 59;;Ja;OHNE_REFERENZ_STRASSENABKUERZUNG;02037
+00038;Wolke Medientechnik AG;;;Hauptstrasse;41;6048;Horw;CH;kontakt038@example.invalid;+41 41 555 38 66;;Ja;OHNE_REFERENZ_EXAKT;02038
+00039;Bogen Fahrzeugtechnik;;;Industriestrasse;44;6300;Zug;CH;kontakt039@example.invalid;+41 41 555 39 73;;Ja;OHNE_REFERENZ_FIRMENVARIANTE;02039
+00040;Hof Druckerei AG;;;Rosenbergstrasse;47;9000;St. Gallen;CH;kontakt040@example.invalid;+41 41 555 40 80;;Ja;OHNE_REFERENZ_EXAKT;02040
+00041;Nova Planung AG;;;Seftigenstrasse 50;;3007;Bern;CH;kontakt041@example.invalid;+41 41 555 41 87;;Ja;OHNE_REFERENZ_NUMMER_IN_STRASSE;02041
+00042;EICHEN GEBÄUDETECHNIK AG;;;Langstrasse;53;8004;Zürich;CH;kontakt042@example.invalid;+41 41 555 42 94;;Ja;OHNE_REFERENZ_GROSS_KLEIN;02042
+00043;Tanne IT-Dienstleistungen AG;;;Steinenvorstadt;56;4051;Basel;CH;kontakt043@example.invalid;+41 41 555 43 01;;Ja;OHNE_REFERENZ_STRASSENABKUERZUNG;02043
+00044;Hoch Elektrotechnik AG;;;Technikumstrasse;59;8400;Winterthur;CH;kontakt044@example.invalid;+41 41 555 44 08;;Ja;OHNE_REFERENZ_EXAKT;02044
+00045;West Büroservice;;;Zentralstrasse;62;2502;Biel;CH;kontakt045@example.invalid;+41 41 555 45 15;;Ja;OHNE_REFERENZ_FIRMENVARIANTE;02045
+00046;Ost Holzbau AG;;;Aarauerstrasse;65;4600;Olten;CH;kontakt046@example.invalid;+41 41 555 46 22;;Ja;OHNE_REFERENZ_EXAKT;02046
+00047;Süd Logistik AG;;;Tribschenstrasse 68;;6005;Luzern;CH;kontakt047@example.invalid;+41 41 555 47 29;;Ja;OHNE_REFERENZ_NUMMER_IN_STRASSE;02047
+00048;Bachtal Haustechnik AG;;;Gotthardstrasse;71;8800;Thalwil;CH;kontakt048@example.invalid;+41 41 555 48 36;;Ja;OHNE_REFERENZ_EXAKT;02048
+00049;Licht Architektur AG;;;Bahnhofstr.;74;6003;Luzern;CH;kontakt049@example.invalid;+41 41 555 49 43;;Ja;OHNE_REFERENZ_STRASSENABKUERZUNG;02049
+00050;Dreieck Treuhand AG;;;Hauptstrasse;2;6048;Horw;CH;kontakt050@example.invalid;+41 41 555 50 50;;Ja;OHNE_REFERENZ_EXAKT;02050
+00051;Zentrum Gartenbau;;;Industriestrasse;5;6300;Zug;CH;kontakt051@example.invalid;+41 41 555 51 57;;Ja;OHNE_REFERENZ_FIRMENVARIANTE;02051
+00052;Morgen Medientechnik AG;;;Rosenbergstrasse;8;9000;St. Gallen;CH;kontakt052@example.invalid;+41 41 555 52 64;;Ja;OHNE_REFERENZ_EXAKT;02052
+00053;Fluss Fahrzeugtechnik AG;;;Seftigenstrasse 11;;3007;Bern;CH;kontakt053@example.invalid;+41 41 555 53 71;;Ja;OHNE_REFERENZ_NUMMER_IN_STRASSE;02053
+00054;GIPFEL DRUCKEREI AG;;;Langstrasse;14;8004;Zürich;CH;kontakt054@example.invalid;+41 41 555 54 78;;Ja;OHNE_REFERENZ_GROSS_KLEIN;02054
+00055;Limmat Planung AG;;;Steinenvorstadt;17;4051;Basel;CH;kontakt055@example.invalid;+41 41 555 55 85;;Ja;OHNE_REFERENZ_STRASSENABKUERZUNG;02055
+00056;Andere Firma am gleichen Ort AG;;;Rosenbergstrasse;13;9000;St. Gallen;CH;kein-treffer-56@example.invalid;+41 41 555 56 92;;Ja;FALSCH_POSITIV_RISIKO;
+00057;Ausgeschlossene Musteradresse AG;;;Testweg;237;2502;Biel;CH;kein-treffer-57@example.invalid;+41 41 555 57 99;;Nein;MIGRATION_AUSGESCHLOSSEN;
+00058;Einzeltest 58 Musterfirma GmbH;;;Beispielgasse;238;4600;Olten;CH;kein-treffer-58@example.invalid;+41 41 555 58 06;;Ja;KEIN_DUBLETTENTREFFER;
+00059;Einzeltest 59 Musterfirma GmbH;;;Testweg;239;6005;Luzern;CH;kein-treffer-59@example.invalid;+41 41 555 59 13;;Ja;KEIN_DUBLETTENTREFFER;
+00060;Einzeltest 60 Musterfirma GmbH;;;Beispielgasse;240;8800;Thalwil;CH;kein-treffer-60@example.invalid;+41 41 555 60 20;;Ja;KEIN_DUBLETTENTREFFER;
+00061;Einzeltest 61 Musterfirma GmbH;;;Testweg;241;6003;Luzern;CH;kein-treffer-61@example.invalid;+41 41 555 61 27;;Ja;KEIN_DUBLETTENTREFFER;
+00062;Einzeltest 62 Musterfirma GmbH;;;Beispielgasse;242;6048;Horw;CH;kein-treffer-62@example.invalid;+41 41 555 62 34;;Ja;KEIN_DUBLETTENTREFFER;
+00063;Einzeltest 63 Musterfirma GmbH;;;Testweg;243;6300;Zug;CH;kein-treffer-63@example.invalid;+41 41 555 63 41;;Ja;KEIN_DUBLETTENTREFFER;
+00064;Einzeltest 64 Musterfirma GmbH;;;Beispielgasse;244;9000;St. Gallen;CH;kein-treffer-64@example.invalid;+41 41 555 64 48;;Ja;KEIN_DUBLETTENTREFFER;
+00065;Einzeltest 65 Musterfirma GmbH;;;Testweg;245;3007;Bern;CH;kein-treffer-65@example.invalid;+41 41 555 65 55;;Ja;KEIN_DUBLETTENTREFFER;
+00066;Einzeltest 66 Musterfirma GmbH;;;Beispielgasse;246;8004;Zürich;CH;kein-treffer-66@example.invalid;+41 41 555 66 62;;Ja;KEIN_DUBLETTENTREFFER;

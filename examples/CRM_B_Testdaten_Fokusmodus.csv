@@ -1,0 +1,60 @@
+﻿ID;Firma;Vorname;Nachname;Strasse;Hausnummer;PLZ;Ort;Land;E-Mail;Telefon
+01001;Alpen IT-Dienstleistungen AG;;;Bahnhofstrasse;5;6003;Luzern;CH;kontakt001@example.invalid;+41 41 555 01 07
+01002;Seeland Elektrotechnik AG;;;Hauptstrasse;8;6048;Horw;CH;kontakt002@example.invalid;+41 41 555 02 14
+01003;Pilatus Büroservice AG;;;Industriestrasse;11;6300;Zug;CH;kontakt003@example.invalid;+41 41 555 03 21
+01004;Mittelland Holzbau AG;;;Rosenbergstrasse;14;9000;St. Gallen;CH;kontakt004@example.invalid;+41 41 555 04 28
+01005;Helvetia Logistik AG;;;Seftigenstrasse;17;3007;Bern;CH;kontakt005@example.invalid;+41 41 555 05 35
+01006;Brunnen Haustechnik AG;;;Langstrasse;20;8004;Zürich;CH;kontakt006@example.invalid;+41 41 555 06 42
+01008;Sonnen Treuhand AG;;;Technikumstrasse;26;8400;Winterthur;CH;kontakt008@example.invalid;+41 41 555 08 56
+01010;Aare Medientechnik AG;;;Aarauerstrasse;32;4600;Olten;CH;kontakt010@example.invalid;+41 41 555 10 70
+01011;Rigi Fahrzeugtechnik AG;;;Tribschenstrasse;35;6005;Luzern;CH;kontakt011@example.invalid;+41 41 555 11 77
+01012;Mueller Elektroplanung AG;;;Gotthardstrasse;38;8800;Thalwil;CH;kontakt012@example.invalid;+41 41 555 12 84
+01013;See Planung AG;;;Bahnhofstrasse;41;6003;Luzern;CH;kontakt013@example.invalid;+41 41 555 13 91
+01014;Berg Gebäudetechnik AG;;;Hauptstrasse;44;6048;Horw;CH;kontakt014@example.invalid;+41 41 555 14 98
+01015;Hirsch IT-Dienstleistungen AG;;;Industriestrasse;47;6300;Zug;CH;kontakt015@example.invalid;+41 41 555 15 05
+01016;Tal Elektrotechnik AG;;;Rosenbergstrasse;50;9000;St. Gallen;CH;kontakt016@example.invalid;+41 41 555 16 12
+01017;Stern Büroservice AG;;;Seftigenstrasse;53;3007;Bern;CH;kontakt017@example.invalid;+41 41 555 17 19
+01018;Kreuz Holzbau AG;;;Langstrasse;56;8004;Zürich;CH;kontakt018@example.invalid;+41 41 555 18 26
+01020;Werk Haustechnik AG;;;Technikumstrasse;62;8400;Winterthur;CH;kontakt020@example.invalid;+41 41 555 20 40
+01021;Stadt Architektur AG;;;Zentralstrasse;65;2502;Biel;CH;kontakt021@example.invalid;+41 41 555 21 47
+01022;Ufer Treuhand AG;;;Aarauerstrasse;68;4600;Olten;CH;kontakt022@example.invalid;+41 41 555 22 54
+01023;Garten Gartenbau AG;;;Tribschenstrasse;71;6005;Luzern;CH;kontakt023@example.invalid;+41 41 555 23 61
+02024;Brücke Medientechnik AG;;;Gotthardstrasse;74;8800;Thalwil;CH;kontakt024@example.invalid;+41 41 555 24 68
+02025;Fokus Fahrzeugtechnik AG;;;Bahnhofstrasse;2;6003;Luzern;CH;kontakt025@example.invalid;+41 41 555 25 75
+02026;Kiesel Druckerei AG;;;Hauptstrasse;5;6048;Horw;CH;kontakt026@example.invalid;+41 41 555 26 82
+02027;Waldblick Planung AG;;;Industriestrasse;8;6300;Zug;CH;kontakt027@example.invalid;+41 41 555 27 89
+02028;Moos Gebäudetechnik AG;;;Rosenbergstrasse;11;9000;St. Gallen;CH;kontakt028@example.invalid;+41 41 555 28 96
+02029;Feld IT-Dienstleistungen AG;;;Seftigenstrasse;14;3007;Bern;CH;kontakt029@example.invalid;+41 41 555 29 03
+02030;Quell Elektrotechnik AG;;;Langstrasse;17;8004;Zürich;CH;kontakt030@example.invalid;+41 41 555 30 10
+02031;Baupunkt Büroservice AG;;;Steinenvorstadt;20;4051;Basel;CH;kontakt031@example.invalid;+41 41 555 31 17
+02032;Linden Holzbau AG;;;Technikumstrasse;23;8400;Winterthur;CH;kontakt032@example.invalid;+41 41 555 32 24
+02033;Silber Logistik AG;;;Zentralstrasse;26;2502;Biel;CH;kontakt033@example.invalid;+41 41 555 33 31
+02034;Fjord Haustechnik AG;;;Aarauerstrasse;29;4600;Olten;CH;kontakt034@example.invalid;+41 41 555 34 38
+02035;Mosaik Architektur AG;;;Tribschenstrasse;32;6005;Luzern;CH;kontakt035@example.invalid;+41 41 555 35 45
+02036;Rotsee Treuhand AG;;;Gotthardstrasse;35;8800;Thalwil;CH;kontakt036@example.invalid;+41 41 555 36 52
+02037;Korn Gartenbau AG;;;Bahnhofstrasse;38;6003;Luzern;CH;kontakt037@example.invalid;+41 41 555 37 59
+02038;Wolke Medientechnik AG;;;Hauptstrasse;41;6048;Horw;CH;kontakt038@example.invalid;+41 41 555 38 66
+02039;Bogen Fahrzeugtechnik AG;;;Industriestrasse;44;6300;Zug;CH;kontakt039@example.invalid;+41 41 555 39 73
+02040;Hof Druckerei AG;;;Rosenbergstrasse;47;9000;St. Gallen;CH;kontakt040@example.invalid;+41 41 555 40 80
+02041;Nova Planung AG;;;Seftigenstrasse;50;3007;Bern;CH;kontakt041@example.invalid;+41 41 555 41 87
+02042;Eichen Gebäudetechnik AG;;;Langstrasse;53;8004;Zürich;CH;kontakt042@example.invalid;+41 41 555 42 94
+02043;Tanne IT-Dienstleistungen AG;;;Steinenvorstadt;56;4051;Basel;CH;kontakt043@example.invalid;+41 41 555 43 01
+02044;Hoch Elektrotechnik AG;;;Technikumstrasse;59;8400;Winterthur;CH;kontakt044@example.invalid;+41 41 555 44 08
+02045;West Büroservice AG;;;Zentralstrasse;62;2502;Biel;CH;kontakt045@example.invalid;+41 41 555 45 15
+02046;Ost Holzbau AG;;;Aarauerstrasse;65;4600;Olten;CH;kontakt046@example.invalid;+41 41 555 46 22
+02047;Süd Logistik AG;;;Tribschenstrasse;68;6005;Luzern;CH;kontakt047@example.invalid;+41 41 555 47 29
+02048;Bachtal Haustechnik AG;;;Gotthardstrasse;71;8800;Thalwil;CH;kontakt048@example.invalid;+41 41 555 48 36
+02049;Licht Architektur AG;;;Bahnhofstrasse;74;6003;Luzern;CH;kontakt049@example.invalid;+41 41 555 49 43
+02050;Dreieck Treuhand AG;;;Hauptstrasse;2;6048;Horw;CH;kontakt050@example.invalid;+41 41 555 50 50
+02051;Zentrum Gartenbau AG;;;Industriestrasse;5;6300;Zug;CH;kontakt051@example.invalid;+41 41 555 51 57
+02052;Morgen Medientechnik AG;;;Rosenbergstrasse;8;9000;St. Gallen;CH;kontakt052@example.invalid;+41 41 555 52 64
+02053;Fluss Fahrzeugtechnik AG;;;Seftigenstrasse;11;3007;Bern;CH;kontakt053@example.invalid;+41 41 555 53 71
+02054;Gipfel Druckerei AG;;;Langstrasse;14;8004;Zürich;CH;kontakt054@example.invalid;+41 41 555 54 78
+02055;Limmat Planung AG;;;Steinenvorstadt;17;4051;Basel;CH;kontakt055@example.invalid;+41 41 555 55 85
+03067;Nur in B 67 Fantasiebetrieb AG;;;Steinenvorstadt;53;4051;Basel;CH;nur-b-67@example.invalid;+41 41 555 67 69
+03068;Nur in B 68 Fantasiebetrieb AG;;;Technikumstrasse;56;8400;Winterthur;CH;nur-b-68@example.invalid;+41 41 555 68 76
+03069;Nur in B 69 Fantasiebetrieb AG;;;Zentralstrasse;59;2502;Biel;CH;nur-b-69@example.invalid;+41 41 555 69 83
+03070;Nur in B 70 Fantasiebetrieb AG;;;Aarauerstrasse;62;4600;Olten;CH;nur-b-70@example.invalid;+41 41 555 70 90
+03071;Nur in B 71 Fantasiebetrieb AG;;;Tribschenstrasse;65;6005;Luzern;CH;nur-b-71@example.invalid;+41 41 555 71 97
+03072;Nur in B 72 Fantasiebetrieb AG;;;Gotthardstrasse;68;8800;Thalwil;CH;nur-b-72@example.invalid;+41 41 555 72 04
+03073;Nur in B 73 Fantasiebetrieb AG;;;Bahnhofstrasse;71;6003;Luzern;CH;nur-b-73@example.invalid;+41 41 555 73 11

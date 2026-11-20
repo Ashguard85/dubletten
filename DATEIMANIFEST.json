@@ -1,0 +1,75 @@
+{
+  "name": "CRM-Dubletten v1.8.5 Komplettupdate mit synthetischen Testdaten",
+  "kind": "Komplettes Fokusmodus-Update für vorhandenes Repository – kein eigenständiges App-Image",
+  "source_test_counts": {
+    "crm_a": 66,
+    "crm_b": 59
+  },
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "71552d2a5e3b612321a2925c319d759026b2d456575ee92c010099d0d32c30f1",
+      "bytes": 970
+    },
+    {
+      "path": "INSTALLATION.md",
+      "sha256": "21688f154069a50887c20dffbb421d726dd4aeab3698e712d91bff9187c3d39b",
+      "bytes": 2996
+    },
+    {
+      "path": "TESTDATEN-SOLLRESULTATE.md",
+      "sha256": "56840b1cce37fdf57ee68acfa44214fb7ca78772678002f94e87bc9b0fb5f9d6",
+      "bytes": 1486
+    },
+    {
+      "path": "app/focus_data.py",
+      "sha256": "3e59cab5015aefdb3c53f9a56ce5f0908008988370ac3ef1ddb65a3a6a2d506c",
+      "bytes": 5487
+    },
+    {
+      "path": "app/focus_swiss_data.py",
+      "sha256": "566d8592ed5fc2e752e15f1b2b4ba8489f0f4753524b86531d8217d8a58aa755",
+      "bytes": 5590
+    },
+    {
+      "path": "app/focus_swiss_view.py",
+      "sha256": "e9d0390f0692573127b4a19e38b2fa57f57a59f46614b56b319798be33019edc",
+      "bytes": 6945
+    },
+    {
+      "path": "app/focus_ui.py",
+      "sha256": "13e8f851f25c86ae9dd4ef85c7706a9c445600130b5e854f651f651e8ad50fda",
+      "bytes": 21194
+    },
+    {
+      "path": "examples/CRM_A_Testdaten_Fokusmodus.csv",
+      "sha256": "47f9aa251d27ae5868d429c42edd2dcec1dd0aee048d93da71b1c579d1c9e6e8",
+      "bytes": 9646
+    },
+    {
+      "path": "examples/CRM_B_Testdaten_Fokusmodus.csv",
+      "sha256": "1b99a24cce8f4f7f2148796ee454e8882a6a5493a12e2332610c94e85cf2f9f9",
+      "bytes": 6510
+    },
+    {
+      "path": "scripts/apply_focus_patch.py",
+      "sha256": "d102e51517de0500f244afad883242c28e6b4642df564add70136cc3e9a07e4c",
+      "bytes": 3216
+    },
+    {
+      "path": "scripts/apply_swiss_focus_patch.py",
+      "sha256": "30e47a080237493e0c9c3c006a84a293572f70f5f872f4899b63594fc19e21a9",
+      "bytes": 3326
+    },
+    {
+      "path": "tests/test_focus.py",
+      "sha256": "7024b7fcc698864b09298bc1576c25e5682fe8df681f5c9e182026dcaddce6d9",
+      "bytes": 5857
+    },
+    {
+      "path": "tests/test_focus_swiss_v185.py",
+      "sha256": "217c79a355a5debba27eb4755da345c1b08374c83f7de8921c942235697f8e08",
+      "bytes": 9232
+    }
+  ]
+}
