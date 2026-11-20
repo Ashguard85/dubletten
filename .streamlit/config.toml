@@ -1,7 +1,7 @@
 [server]
 headless = true
-maxUploadSize = 60
-maxMessageSize = 90
+maxUploadSize = 250
+maxMessageSize = 300
 enableCORS = true
 enableXsrfProtection = true
 enableStaticServing = false
