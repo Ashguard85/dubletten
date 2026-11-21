@@ -1,4 +1,4 @@
-"""Complete fresh-install Streamlit CRM address and migration auditing UI v1.8.7.1.
+"""Complete fresh-install Streamlit CRM address and migration auditing UI v1.8.7.2.
 
 All workflows local, no CRM writes, opt-in local Ollama, Swiss focus reviews.
 """
@@ -74,7 +74,7 @@ with st.sidebar:
 # Avoid tall dashboard headings during case-by-case review.
 if selected!='🎯 Fokusmodus':
  st.title('🔎 CRM-Dubletten Lokal')
- st.caption('GUI v1.8.7.1 · Interne Dubletten · Schweizer Adressprüfung · CRM A→B · RapidFuzz / Splink 5 · optionale KI')
+ st.caption('GUI v1.8.7.2 · Interne Dubletten · Schweizer Adressprüfung · CRM A→B · RapidFuzz / Splink 5 · optionale KI')
 
 if selected=='🎯 Fokusmodus':
  render_focus_workspace(db_path)

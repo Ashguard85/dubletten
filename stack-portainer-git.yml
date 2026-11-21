@@ -19,7 +19,7 @@ x-app-environment: &app-environment
   NO_PROXY: "host.docker.internal,localhost,127.0.0.1"
 services:
   app:
-    image: crm-dubletten:1.8.7-neu
+    image: crm-dubletten:1.8.7.2-neu
     pull_policy: build
     build: *app-build
     ports:

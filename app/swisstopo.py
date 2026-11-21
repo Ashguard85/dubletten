@@ -131,6 +131,9 @@ def import_snapshot(db,path,reference_date,progress=None):
  return sid,count
 
 def validate_record(db,sid,record):
+ # CRM records come from SQLite as sqlite3.Row, which has indexing but no
+ # .get() method. Standalone callers may pass dicts; normalize both here.
+ record = dict(record)
  raw=json.loads(record.get('original_json') or '{}')
  country=plain(raw.get('country'))
  if country and norm(country) not in ('ch','che','schweiz','suisse','svizzera','switzerland'):
